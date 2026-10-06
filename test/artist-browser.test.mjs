@@ -8,19 +8,20 @@ import {LocationError} from '../src/locations.mjs';
 const headers=['Artist','Event','Location','City','Address','Ticket Link','Show Time','YouTube (Most Popular Song)'];
 const row=(artist,date='2026-10-09',event='',city='Dallas, TX')=>[artist,event,'Venue',city,'','https://tickets.example/event',date,'https://youtu.be/artist'];
 const records=parseShows([headers,row('Tiësto'),row('Other DJ'),row('Tiësto','2027-01-01'),row('Paris'),row('Steve Angello')]);
-async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensureArtist,loadCatalog,loadSource}={}) {
- const writes=[];
- const catalog={load:loadCatalog||(async()=>({artists,promoters:['SILO Dallas'],canAdd:true})),ensureArtist:ensureArtist||(async(name)=>{writes.push(name);return{name,added:true};})};
+async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensureArtist,loadCatalog,loadSource,verifyArtist}={}) {
+ const writes=[],verifications=[];
+ const catalog={load:loadCatalog||(async()=>({artists,promoters:['SILO Dallas'],canAdd:true})),ensureArtist:ensureArtist||(async(name)=>{writes.push(name);artists.push(name);return{name,added:true};})};
+ const verifier={verify:async(name,options)=>{verifications.push(name);return verifyArtist?verifyArtist(name,options):{status:'verified',name};}};
  const geo=geocoder||{resolveCity:async(query)=>{
   if(/^(Dallas(?:, TX)?|Paris, France)$/.test(query))return{lat:32.78,lng:-96.8,label:query,timeZone:'America/Chicago'};
   if(query==='Springfield')throw new LocationError('AMBIGUOUS','Add a state.');
   throw new LocationError('NOT_FOUND','Location not found.');
  },resolve:async()=>({lat:32.78,lng:-96.8})};
- const app=createHostedApp({env:{PORT:'0'},browser:{clock:()=>'2026-10-05',source:{load:loadSource||(async()=>({shows}))},catalog,geocoder:geo}});
+ const app=createHostedApp({env:{PORT:'0'},browser:{clock:()=>'2026-10-05',source:{load:loadSource||(async()=>({shows}))},catalog,verifier,geocoder:geo}});
  app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>new Promise(resolve=>app.server.close(resolve)));
  const url=`http://127.0.0.1:${app.server.address().port}`;
  const post=(input,extra={})=>fetch(url+'/api/browser/shows',{method:'POST',headers:{'Content-Type':'application/json',...extra},body:JSON.stringify({view:'nearby',timeZone:'America/Chicago',...input})});
- return{url,post,writes};
+ return{url,post,writes,verifications,search:app.browserApp.search};
 }
 
 test('one-box known artist filtering keeps nearby seven-day scope and supports accent variants',async t=>{
@@ -60,10 +61,11 @@ test('a show artist absent from Artist List gets added, but partial queries do n
  const partial=await (await post({query:'angello'})).json();assert.equal(partial.searchKind,'artist');assert.equal(partial.shows.length,1);assert.equal(writes.length,1);
 });
 
-test('a genuinely new artist is added even if no upcoming shows match',async t=>{
- const {post,writes}=await setup(t);
+test('a verified new artist is added even if no upcoming shows match',async t=>{
+ const {post,writes,verifications}=await setup(t);
  const result=await (await post({query:'New DJ'})).json();assert.equal(result.searchKind,'artist');assert.equal(result.total,0);
  assert.deepEqual(writes,['New DJ']);assert.deepEqual(result.artistRegistration,{name:'New DJ',added:true});
+ assert.deepEqual(verifications,['New DJ']);
 });
 
 test('promoters, ambiguous cities, ZIP errors, invalid input, cross-origin requests and outages never add artists',async t=>{
@@ -170,4 +172,57 @@ test('explicit locations and GPS searches do not depend on or call the artist ca
  const gpsResponse=await post({latitude:32.78,longitude:-96.8});assert.equal(gpsResponse.status,200);
  assert.equal((await gpsResponse.json()).total,4);
  assert.equal(catalogCalls,0);assert.deepEqual(writes,[]);
+});
+
+test('unverified names never reach a catalog write, including explicit artist entries',async t=>{
+ const {post,writes,verifications}=await setup(t,{verifyArtist:async()=>({status:'unverified'})});
+ for(const query of ['Made Up DJ','artist: Made Up DJ','Steve Angello']) {
+  const response=await post({query});assert.equal(response.status,200);
+  const result=await response.json();assert.equal(result.artistRegistration.status,'unverified');
+  assert.equal(result.artistRegistration.added,false);
+  assert.equal(result.total,query==='Steve Angello'?1:0);
+ }
+ assert.deepEqual(verifications,['Made Up DJ','Made Up DJ','Steve Angello']);assert.deepEqual(writes,[]);
+});
+
+test('verification failures leave both zero-event and usable artist searches available without writes',async t=>{
+ for(const verifyArtist of [async()=>({status:'unavailable'}),async()=>{throw new Error('SECRET verification failure');}]) {
+  const {post,writes}=await setup(t,{verifyArtist});
+  for(const query of ['New DJ','Steve Angello']) {
+   const response=await post({query});assert.equal(response.status,200);
+   const result=await response.json();assert.equal(result.artistRegistration.status,'verification-unavailable');
+   assert.equal(result.total,query==='Steve Angello'?1:0);assert.doesNotMatch(JSON.stringify(result),/SECRET/);
+  }
+  assert.deepEqual(writes,[]);
+ }
+});
+
+test('existing artists and partial searches bypass both verification and additions even with no events',async t=>{
+ const {post,writes,verifications}=await setup(t,{artists:['Existing DJ','Tiësto'],verifyArtist:async()=>{throw new Error('Must not verify');}});
+ const existing=await (await post({query:'artist: EXISTING DJ'})).json();assert.equal(existing.total,0);assert.equal(existing.artistRegistration,null);
+ const partial=await (await post({query:'angello'})).json();assert.equal(partial.shows.length,1);assert.equal(partial.artistRegistration,null);
+ assert.deepEqual(writes,[]);assert.deepEqual(verifications,[]);
+});
+
+test('verified canonical spelling is saved once and later zero-event searches reuse the list',async t=>{
+ const {post,writes,verifications}=await setup(t,{verifyArtist:async()=>({status:'verified',name:'Autechre'})});
+ const first=await (await post({query:'autechre'})).json();assert.equal(first.total,0);
+ assert.deepEqual(first.artistRegistration,{name:'Autechre',added:true});
+ const second=await (await post({query:'AUTECHRE'})).json();assert.equal(second.total,0);assert.equal(second.artistRegistration,null);
+ assert.deepEqual(writes,['Autechre']);assert.deepEqual(verifications,['autechre']);
+});
+
+test('a verification result for a different artist cannot authorize a write',async t=>{
+ const {post,writes}=await setup(t,{verifyArtist:async()=>({status:'verified',name:'A different artist'})});
+ const result=await (await post({query:'New DJ'})).json();assert.equal(result.artistRegistration.status,'unverified');assert.deepEqual(writes,[]);
+});
+
+test('cancellation during verification prevents a later addition',async t=>{
+ let begin;const started=new Promise(resolve=>{begin=resolve;});
+ let finish;const pending=new Promise(resolve=>{finish=resolve;});
+ const {search,writes}=await setup(t,{verifyArtist:async()=>{begin();await pending;return{status:'verified',name:'New DJ'};}});
+ const controller=new AbortController();
+ const result=search({query:'New DJ',view:'nearby'},{signal:controller.signal});
+ await started;controller.abort();await assert.rejects(result,{name:'AbortError'});
+ finish();await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(writes,[]);
 });

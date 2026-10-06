@@ -291,6 +291,44 @@ test('an artist appearance keeps the festival name and ticket and YouTube links'
  assert.deepEqual(descendants(card).filter(node=>node.tag==='a').map(node=>node.textContent),['Tickets','YouTube']);
 });
 
+test('an unverified artist stays unadded and keeps its honest zero-show result',async()=>{
+ const {nodes,calls}=await page({geolocation:false,fetchResult:()=>response({shows:[],searchKind:'artist',artistQuery:'Unknown DJ',artistRegistration:{name:'Unknown DJ',added:false,status:'unverified'}})});
+ submit(nodes,'Unknown DJ');await tick();
+ const message=nodes.get('location-status').textContent;
+ assert.match(message,/No shows found for Unknown DJ.*Next 7 days.*All locations/);
+ assert.match(message,/Could not verify “Unknown DJ” as a music artist; not added/);
+ assert.doesNotMatch(message,/Added .* to Artist List|temporarily unavailable|could not be confirmed/);
+ assert.equal(nodes.get('show-grid').children.length,0);assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ assert.equal(nodes.get('location-status').children.length,0);assert.equal(calls.length,1);
+});
+
+test('unavailable artist verification does not hide usable show results or claim a saved name',async()=>{
+ const {nodes}=await page({geolocation:false,fetchResult:()=>response({shows:[{artist:'Search DJ',date:'2026-10-09',ticketUrl:'https://tickets.example/show'}],searchKind:'artist',artistQuery:'Search DJ',artistRegistration:{name:'Search DJ',added:false,status:'verification-unavailable'}})});
+ submit(nodes,'Search DJ');await tick();
+ const message=nodes.get('location-status').textContent;
+ assert.match(message,/Artist verification is temporarily unavailable; not added/);
+ assert.doesNotMatch(message,/Added .* to Artist List|Could not verify|No shows found/);
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'Search DJ');
+ assert.equal(nodes.get('location-status').children.length,0);
+});
+
+test('a verified artist can be confirmed added even when the selected range has no events',async()=>{
+ const {nodes,calls}=await page({geolocation:false,fetchResult:()=>response({shows:[],searchKind:'artist',artistQuery:'Confirmed DJ',artistRegistration:{name:'Confirmed DJ',added:true,status:'saved'}})});
+ submit(nodes,'Confirmed DJ');await tick();
+ const message=nodes.get('location-status').textContent;
+ assert.match(message,/No shows found for Confirmed DJ.*Next 7 days.*All locations/);
+ assert.match(message,/Added “Confirmed DJ” to Artist List/);
+ assert.doesNotMatch(message,/not added|could not be confirmed|Could not verify/);
+ assert.equal(nodes.get('show-grid').children.length,0);assert.equal(calls.length,1);
+});
+
+test('an existing saved artist is not presented as a new addition or verification failure',async()=>{
+ const {nodes}=await page({geolocation:false,fetchResult:()=>response({shows:[],searchKind:'artist',artistQuery:'Existing DJ',artistRegistration:{name:'Existing DJ',added:false,status:'saved'}})});
+ submit(nodes,'Existing DJ');await tick();
+ const message=nodes.get('location-status').textContent;
+ assert.match(message,/No shows found for Existing DJ/);
+ assert.doesNotMatch(message,/Added .* to Artist List|not added|verification|Could not verify|could not be confirmed/);
+});
 
 test('startup finishes the show search before it requests optional artist suggestions',async()=>{
  const pending=[];

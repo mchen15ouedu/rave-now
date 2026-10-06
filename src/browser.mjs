@@ -8,6 +8,7 @@ import { findNearbyShows, findFutureShows } from './shows.mjs';
 import { browserDateWindow, browserRangeLabels } from './browser-ranges.mjs';
 import { groupEventResults } from './event-groups.mjs';
 import { createArtistCatalog } from './artist-catalog.mjs';
+import { createArtistVerifier } from './artist-verification.mjs';
 import { artistKey, parseSearchQuery, matchingArtistNames, artistMatches, looksLikeLocation, SearchInputError } from './artist-search.mjs';
 
 class BrowserError extends Error {constructor(status,message){super(message);this.status=status;}}
@@ -42,10 +43,11 @@ const publicFields=['id','artist','event','type','entryCount','venue','address',
 /** Browser searches share show selection rules without registering a messaging
  * user, opening SQLite, or retaining the visitor's location.
  */
-export function createBrowserHandler({env=process.env,source,geocoder,catalog,clock=()=>new Date(),messagingReady=false}={}) {
+export function createBrowserHandler({env=process.env,source,geocoder,catalog,verifier,clock=()=>new Date(),messagingReady=false}={}) {
   const config=configForBrowser(env);
   source??=createShowSource(config);
   catalog??=createArtistCatalog({env});
+  verifier??=createArtistVerifier();
   geocoder??=env.BROWSER_GEOCODER==='google'?new GoogleLocationProvider({apiKey:env.GOOGLE_MAPS_API_KEY}):new CityLocationProvider();
   const sourceMeta={label:'Event feed',snapshot:config.mode==='demo'};
   const assets=new Map([['/',['index.html','text/html; charset=utf-8']],['/browser/app.js',['app.js','text/javascript; charset=utf-8']],['/browser/profiles.js',['profiles.js','text/javascript; charset=utf-8']],['/browser/style.css',['style.css','text/css; charset=utf-8']]]);
@@ -64,6 +66,33 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
       signal?.throwIfAborted();
       return {artists:[],promoters:[],available:false};
     } finally {limited.removeEventListener('abort',onAbort);}
+  }
+  async function registerVerifiedArtist(name,{signal,startedAt}) {
+    async function boundedOperation(operation,budget) {
+      const deadline=AbortSignal.timeout(Math.ceil(budget));
+      const limited=signal?AbortSignal.any([signal,deadline]):deadline;
+      let onAbort;
+      const aborted=new Promise((_,reject)=>{onAbort=()=>reject(limited.reason);limited.addEventListener('abort',onAbort,{once:true});});
+      try {limited.throwIfAborted();return await Promise.race([operation(limited),aborted]);}
+      finally {limited.removeEventListener('abort',onAbort);}
+    }
+    const remaining=42_000-(performance.now()-startedAt);
+    if (remaining<=0) return {name,added:false,status:'verification-unavailable'};
+    let verification;
+    try {verification=await boundedOperation(limited=>verifier.verify(name,{signal:limited}),Math.min(10_000,remaining));}
+    catch {signal?.throwIfAborted();return {name,added:false,status:'verification-unavailable'};}
+    signal?.throwIfAborted();
+    if (verification?.status==='unavailable') return {name,added:false,status:'verification-unavailable'};
+    if (verification?.status!=='verified' || artistKey(verification.name)!==artistKey(name)) return {name,added:false,status:'unverified'};
+    // A verified identity is still not a confirmed save. Writes get one attempt
+    // and share the search deadline; the bridge deduplicates under its lock.
+    const saveBudget=42_000-(performance.now()-startedAt);
+    if (saveBudget<=0) return {name,added:false,status:'not-saved'};
+    try {
+      return await boundedOperation(limited=>catalog.ensureArtist(verification.name,{signal:limited}),saveBudget);
+    } catch {
+      signal?.throwIfAborted();return {name,added:false,status:'not-saved'};
+    }
   }
   async function resolveOrigin(input,{signal}={}) {
     const hasCoordinates=input.latitude!==undefined||input.longitude!==undefined;
@@ -116,11 +145,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
           if (!names.available) registration={name:artistQuery,added:false,status:'not-saved'};
           else if (!inCatalog && (exact || partial.length===0)) {
             if (matchingArtistNames(artistQuery,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
-            try {registration=await catalog.ensureArtist(artistQuery,{signal});}
-            catch(error) {
-              if (signal?.aborted || error.name==='AbortError') throw error;
-              registration={name:artistQuery,added:false,status:'not-saved'};
-            }
+            registration=await registerVerifiedArtist(artistQuery,{signal,startedAt});
           }
         }
       }
