@@ -1,0 +1,29 @@
+{
+  "sample": true,
+  "description": "Fictional sample events for demonstrating Rave Now. These are not real shows or ticket offers.",
+  "artists": [
+    "Sample Amber",
+    "Sample Archive",
+    "Sample Aurora",
+    "Sample Circuit",
+    "Sample Cobalt",
+    "Sample Compass",
+    "Sample Dawn",
+    "Sample Delta",
+    "Sample Drift",
+    "Sample Horizon",
+    "Sample Metro",
+    "Sample Mirage",
+    "Sample Orbit",
+    "Sample Prism",
+    "Sample Pulse",
+    "Sample Skyline",
+    "Sample Tidal",
+    "Sample Vector",
+    "Sample Velvet"
+  ],
+  "promoters": [
+    "Sample Lantern Promotions",
+    "Sample Paper Moon Events"
+  ]
+}

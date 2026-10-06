@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Enter your location to find nearby shows, tickets, and YouTube links.">
+  <title>Rave Now</title>
+  <link rel="stylesheet" href="/browser/style.css">
+  <script type="module" src="/browser/app.js"></script>
+  <script type="module" src="/browser/profiles.js"></script>
+</head>
+<body>
+  <main>
+    <header class="app-header">
+      <h1>Rave Now</h1>
+      <button id="profiles-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="profiles-dialog"><span id="profiles-summary">Link music profiles</span></button>
+    </header>
+    <dialog id="profiles-dialog" aria-labelledby="profiles-title">
+      <form id="profiles-form" novalidate>
+        <h2 id="profiles-title">Link music profiles</h2>
+        <p class="profile-note">Optional. Save your profile links on this device. Listening history and follows aren’t imported yet.</p>
+        <label for="profile-instagram">Instagram</label>
+        <input id="profile-instagram" name="instagram" type="url" placeholder="https://www.instagram.com/yourname/" maxlength="512" autocomplete="url" spellcheck="false">
+        <label for="profile-youtube">YouTube Music</label>
+        <input id="profile-youtube" name="youtube" type="url" placeholder="https://music.youtube.com/channel/…" maxlength="512" autocomplete="url" spellcheck="false">
+        <label for="profile-spotify">Spotify</label>
+        <input id="profile-spotify" name="spotify" type="url" placeholder="https://open.spotify.com/user/…" maxlength="512" autocomplete="url" spellcheck="false">
+        <p class="profile-note">Clear a field to remove its link.</p>
+        <p id="profiles-status" role="status" aria-live="polite"></p>
+        <div class="profile-actions">
+          <button id="profiles-cancel" class="secondary" type="button">Cancel</button>
+          <button type="submit">Save links</button>
+        </div>
+      </form>
+    </dialog>
+    <form id="location-form">
+      <label for="city">Location or artist</label>
+      <div class="location-entry">
+        <input id="city" name="query" type="text" placeholder="City, ZIP or artist name" maxlength="160" autocomplete="off" list="artist-suggestions" required>
+        <button type="submit">Find shows</button>
+      </div>
+      <datalist id="artist-suggestions"></datalist>
+    </form>
+    <div class="date-filters" role="group" aria-label="Show date range">
+      <button id="range-today" type="button" aria-pressed="false">Today</button>
+      <button id="range-nearby" type="button" aria-pressed="true">Next 7 days</button>
+      <button id="range-weekend" type="button" aria-pressed="false">This weekend</button>
+      <button id="range-month" type="button" aria-pressed="false">This month</button>
+      <button id="range-three-months" type="button" aria-pressed="false">Next 3 months</button>
+    </div>
+    <p id="location-status" role="status" aria-live="polite">Finding your location…</p>
+    <p id="feed-freshness" hidden></p>
+    <section id="show-grid" aria-label="Nearby shows" aria-busy="false"></section>
+    <footer>Location data: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
+  </main>
+</body>
+</html>

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.gz -text
+# Empty final TSV cells are part of the tabular format.
+*.tsv text eol=lf whitespace=-blank-at-eol

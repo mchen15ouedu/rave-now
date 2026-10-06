@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Daily Show Finder · Message simulator</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+  <main>
+    <section class="guide">
+      <div class="eyebrow">RAVE NOW · SAMPLE EVENTS</div><h1>Find your<br>next show.</h1>
+      <p class="intro">Send a location. Get nearby shows and a weekend reminder at 10 PM.</p>
+      <div class="demo-notice"><strong>Local message simulator</strong><p>No real messages are sent. Events are fictitious samples for the fixed demo date October 5, 2026, with coarse location coordinates. Ticket links are placeholders.</p></div>
+      <div class="settings"><span>Next <strong id="days">7</strong> days</span><span><strong id="radius">80</strong> miles, approximate</span></div>
+      <p class="caption">The radius is a two-hour driving proxy. It does not calculate road routes or traffic.</p>
+      <ol><li>Send <strong>INFO</strong> to register.</li><li>Send your city and state to save your location.</li><li>Get weekend shows daily at <strong>10 PM local time</strong>.</li></ol>
+      <p class="caption">In a different town? Send a new location.<br><strong>FULL</strong> lists all future events. <strong>WEEKEND</strong> uses your saved location.</p>
+      <div class="suggestions"><p>Try a location</p><button data-message="Dallas TX">Dallas, TX</button><button data-message="Las Vegas NV">Las Vegas, NV</button><button data-message="Los Angeles CA">Los Angeles, CA</button><button data-message="Fort Worth TX">Fort Worth, TX</button><button data-message="Chicago IL">Chicago, IL</button></div>
+      <p class="caption">Other demo cities: Austin, TX · Houston, TX<br>Live mode supports ZIP codes, addresses, and WhatsApp location pins.</p>
+      <div class="stats"><span id="registered">0</span> registered · <span id="active">0</span> active demo channels</div>
+      <div class="reminder-panel"><strong>Saved location</strong><p id="saved-location">Send a city to set your reminder.</p><button id="preview-reminder" type="button">Preview 10 PM reminder</button><p class="caption">Preview only. No SMS or WhatsApp message is sent.</p></div>
+    </section>
+    <section class="messenger" aria-label="Message simulator">
+      <header><div class="avatar" aria-hidden="true">S</div><div><h2>Show Finder</h2><p id="channel-label">WhatsApp simulator</p></div><select id="channel" aria-label="Messaging channel"><option value="whatsapp">WhatsApp</option><option value="sms">SMS</option></select></header>
+      <div class="chat" id="chat" role="log" aria-live="polite" aria-relevant="additions"><div class="bubble incoming">Welcome to Show Finder. Send INFO to register, then a location to find nearby shows.</div></div>
+      <div class="quick"><button data-message="INFO">INFO</button><button data-message="FULL">FULL</button><button data-message="WEEKEND">WEEKEND</button><button data-message="HELP">HELP</button><button data-message="MORE">MORE</button><button data-message="STOP">STOP</button><button data-message="START">START</button><button data-message="DELETE">DELETE</button></div>
+      <form id="composer"><label for="message" class="sr-only">Message</label><input id="message" placeholder="Type INFO or a city and state" autocomplete="off" maxlength="200" required><button id="send" type="submit">Send</button></form>
+      <p class="test-number">Test sender +1 555 010 2026 · Registration is saved locally</p>
+    </section>
+  </main>
+</body></html>

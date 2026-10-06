@@ -1,0 +1,22 @@
+{
+  "name": "rave-now",
+  "version": "0.1.0",
+  "description": "Nearby music shows in a browser, with SMS and WhatsApp workflows and fictional demo data.",
+  "private": true,
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/mchen15ouedu/rave-now.git" },
+  "packageManager": "pnpm@10.11.0",
+  "type": "module",
+  "engines": { "node": ">=24.0.0" },
+  "scripts": {
+    "start": "node scripts/start-simulator.mjs",
+    "browser": "node scripts/start-browser.mjs",
+    "samples": "node scripts/generate-sample-data.mjs",
+    "test": "node --test --test-concurrency=4",
+    "check": "node --check src/server.mjs"
+  },
+  "dependencies": {
+    "google-auth-library": "^10.0.0",
+    "twilio": "^5.0.0"
+  }
+}
