@@ -58,6 +58,7 @@ test('SMS and WhatsApp FULL group festivals while retaining distant future shows
     assert.match(result.first, /^5 upcoming shows\nAll locations/);
     assertGrouped(result.text);
     assert.match(result.text, /Distant Future DJ/);
+    assert.ok(result.text.indexOf('Mega Rave\n')<result.text.indexOf('Distant Future DJ\n'), 'The upcoming grouped festival must precede the distant-future show');
     assert.doesNotMatch(result.text, /temporarily unavailable|straight-line miles/);
   }
 });
@@ -125,7 +126,7 @@ test('daily SMS and WhatsApp reminder bodies and template variables collapse fes
 
 test('hundreds of festival performers do not inflate bounded reminders or their remaining-show counts', async t => {
   const rows = [
-    ...Array.from({ length: 100 }, (_, index) => row(`Hidden hundred DJ ${index}`, 'A Hundred DJ Festival', '2026-10-11')),
+    ...Array.from({ length: 100 }, (_, index) => row(`Hidden hundred DJ ${index}`, 'A Hundred DJ Festival', '2026-10-09')),
     ...Array.from({ length: 20 }, (_, index) => row(`Solo${String(index).padStart(2, '0')} ${'a'.repeat(120)}`, '', '2026-10-10')),
   ];
   const { shows } = setup(t, rows);

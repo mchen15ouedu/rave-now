@@ -114,10 +114,10 @@ test('Friday and Sunday combine despite missing Saturday while next Friday stays
   const result = groupEventResults([...festival, ...nextFriday]);
   assert.equal(result.length, 2);
   assert.equal(result[0].entryCount, 4);
-  assert.equal(result[0].date, '2026-10-16');
+  assert.equal(result[0].date, '2026-10-09');
   assert.equal(result[1].entryCount, 4);
-  assert.equal(result[1].date, '2026-10-09');
-  assert.equal(result[1].dateEnd, '2026-10-11');
+  assert.equal(result[1].date, '2026-10-16');
+  assert.equal(result[0].dateEnd, '2026-10-11');
 });
 
 test('separate weekends and occurrences a week apart never combine', () => {
@@ -125,8 +125,8 @@ test('separate weekends and occurrences a week apart never combine', () => {
   const second = rows(4, { date: '2026-10-16' });
   const result = groupEventResults([...first, ...second]);
   assert.equal(result.length, 2);
-  assert.equal(result[0].date, '2026-10-16');
-  assert.equal(result[1].date, '2026-10-09');
+  assert.equal(result[0].date, '2026-10-09');
+  assert.equal(result[1].date, '2026-10-16');
   assert.equal(groupEventResults([row(0), row(1), row(2, { date: '2026-10-16' }), row(3, { date: '2026-10-16' })]).length, 4);
 });
 
@@ -136,11 +136,11 @@ test('a long daily series uses fixed seven-day windows instead of chaining forev
   assert.equal(result.length, 3);
   assert.deepEqual(result.map(show => show.entryCount), [7, 7, 7]);
   assert.deepEqual(result.map(show => [show.date, show.dateEnd]), [
-    ['2026-10-15', '2026-10-21'], ['2026-10-08', '2026-10-14'], ['2026-10-01', '2026-10-07'],
+    ['2026-10-01', '2026-10-07'], ['2026-10-08', '2026-10-14'], ['2026-10-15', '2026-10-21'],
   ]);
 });
 
-test('completed multi-day festival cards sort by latest start date while ordinary date ties stay stable', () => {
+test('completed multi-day festivals sort by soonest start date before Saturday while ordinary date ties stay stable', () => {
   const sameDayFirst = row('ordinary-first', { event: '', date: '2026-10-10' });
   const sameDaySecond = row('ordinary-second', { event: '', date: '2026-10-10' });
   const input = [
@@ -153,12 +153,12 @@ test('completed multi-day festival cards sort by latest start date while ordinar
   ];
   const before = structuredClone(input);
   const result = groupEventResults(input);
-  assert.deepEqual(result.map(show => show.date), ['2026-10-10', '2026-10-10', '2026-10-09']);
-  assert.equal(result[0], sameDayFirst);
-  assert.equal(result[1], sameDaySecond);
-  assert.equal(result[2].artist, 'Electric Weekend');
-  assert.equal(result[2].dateEnd, '2026-10-11');
-  assert.equal(result[2].entryCount, 4);
+  assert.deepEqual(result.map(show => show.date), ['2026-10-09', '2026-10-10', '2026-10-10']);
+  assert.equal(result[0].artist, 'Electric Weekend');
+  assert.equal(result[0].dateEnd, '2026-10-11');
+  assert.equal(result[0].entryCount, 4);
+  assert.equal(result[1], sameDayFirst);
+  assert.equal(result[2], sameDaySecond);
   assert.deepEqual(input, before);
 });
 

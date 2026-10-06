@@ -83,7 +83,7 @@ test('dated event announcements without an artist stay searchable with event-lev
   assert.equal(event.youtubeUrl, 'https://www.youtube.com/results?search_query=MOONDANCE%20PNK%20Party');
   const nearby = await findNearbyShows({ shows, origin: 'Dallas TX', geocoder: new DemoLocationProvider(), now: '2026-10-06' });
   assert.deepEqual(nearby.matches.map(show => show.artist), ['MOONDANCE PNK Party']);
-  assert.deepEqual(findFutureShows({ shows, now: '2026-10-06' }).matches.map(show => show.artist), ['Ultra Music Festival 2027', 'MOONDANCE PNK Party']);
+  assert.deepEqual(findFutureShows({ shows, now: '2026-10-06' }).matches.map(show => show.artist), ['MOONDANCE PNK Party', 'Ultra Music Festival 2027']);
 });
 
 test('blank artists still require a specific event name and a valid date', () => {
@@ -183,7 +183,7 @@ test('reference date is interpreted in Chicago and calendar additions cross DST'
   assert.equal(result.windowEnd, '2026-03-13');
 });
 
-test('seven-day window includes today and day six, excludes next week, and orders by latest date then distance', async () => {
+test('seven-day window includes today and day six, excludes next week, and orders by soonest date then distance', async () => {
   const shows = parseShows([
     headers,
     row('Farther', '2026-10-06', 'Fort Worth TX'),
@@ -197,11 +197,23 @@ test('seven-day window includes today and day six, excludes next week, and order
     row('Unknown', '2026-10-07', 'Unmapped town'),
   ]);
   const result = await findNearbyShows({ shows, origin: 'Dallas TX', geocoder: new DemoLocationProvider(), now: '2026-10-05' });
-  assert.deepEqual(result.matches.map((show) => show.artist), ['Last day', 'Closer', 'Farther', 'Today']);
+  assert.deepEqual(result.matches.map((show) => show.artist), ['Today', 'Closer', 'Farther', 'Last day']);
   assert.equal(result.excludedCount, 2);
   assert.equal(result.windowEnd, '2026-10-11');
   assert.equal(result.locationLabel, 'Dallas, TX');
   assert.ok(result.matches.every((show) => show.distanceMiles <= 80 && show.locationApproximate));
+});
+
+test('Friday comes before Saturday even when the later venue is closer to the user', async () => {
+  const shows = parseShows([
+    headers,
+    row('Saturday nearby', 'Sat, Oct 10, 2026', 'Dallas TX'),
+    row('Friday farther', 'Fri, Oct 9, 2026', 'Fort Worth TX'),
+  ]);
+  const result = await findNearbyShows({ shows, origin: 'Dallas TX', geocoder: new DemoLocationProvider(), now: '2026-10-06' });
+  assert.deepEqual(result.matches.map(show => show.artist), ['Friday farther', 'Saturday nearby']);
+  assert.deepEqual(result.matches.map(show => show.date), ['2026-10-09', '2026-10-10']);
+  assert.ok(result.matches[0].distanceMiles > result.matches[1].distanceMiles);
 });
 
 test('radius comparison is inclusive and uses straight-line great-circle distance', async () => {

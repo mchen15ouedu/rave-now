@@ -71,6 +71,7 @@ test('new sample anchors keep Today, weekend, longer ranges, festival grouping a
       assert.equal(result.source.sample, true);
       assert.equal(result.source.label, 'Fictional sample events');
       assert.ok(result.shows.every(show => show.date >= result.windowStart && (!result.windowEnd || show.date <= result.windowEnd)));
+      assert.ok(result.shows.every((show,index) => index===0 || result.shows[index-1].date<=show.date), 'Sample ranges must display soonest upcoming dates first');
       assert.ok(result.shows.every(show => show.artist.startsWith('Sample ')));
     }
     assert.ok(ranges.nearby.shows.some(show => show.artist === 'Sample Skyline'));

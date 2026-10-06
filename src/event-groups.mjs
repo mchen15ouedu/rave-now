@@ -128,7 +128,7 @@ function eventResult(entries) {
 /** Collapse four or more already-matching artist entries into their named event.
  * Run after date/location filtering: only entries actually in the result count.
  * Standalone announcements do not count as performers or duplicate their lineup.
- * Results use latest start date first, preserving the input order of date ties.
+ * Results use soonest start date first, preserving the input order of date ties.
  * Neither the input records nor the input array are modified.
  */
 export function groupEventResults(matches) {
@@ -197,6 +197,6 @@ export function groupEventResults(matches) {
     const bDate = dateEpoch(b?.date);
     if (aDate == null) return bDate == null ? 0 : 1;
     if (bDate == null) return -1;
-    return bDate - aDate;
+    return aDate - bDate;
   });
 }

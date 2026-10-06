@@ -155,13 +155,13 @@ export function calendarDate(now = new Date(), timeZone = 'America/Chicago') {
   return `${lookup.year}-${lookup.month}-${lookup.day}`;
 }
 
-/** All dated upcoming shows, including today, without a location or end-date filter. */
+/** All dated upcoming shows, soonest first, without a location or end-date filter. */
 export function findFutureShows({ shows, now = new Date(), timeZone = 'America/Chicago', signal }) {
   if (!Array.isArray(shows)) throw new TypeError('shows must be an array.');
   signal?.throwIfAborted();
   const windowStart = calendarDate(now, timeZone);
   const matches = shows.filter(show => parseShowDate(show.date) && show.date >= windowStart);
-  matches.sort((a,b) => b.date.localeCompare(a.date) || a.artist.localeCompare(b.artist) || a.id.localeCompare(b.id));
+  matches.sort((a,b) => a.date.localeCompare(b.date) || a.artist.localeCompare(b.artist) || a.id.localeCompare(b.id));
   return { matches, windowStart };
 }
 
@@ -218,6 +218,6 @@ export async function findNearbyShows({ shows, origin, geocoder, now = new Date(
       locationApproximate: Boolean(show.locationApproximate || destination.approximate),
     });
   }
-  matches.sort((a, b) => b.date.localeCompare(a.date) || a.distanceMiles - b.distanceMiles || a.artist.localeCompare(b.artist));
+  matches.sort((a, b) => a.date.localeCompare(b.date) || a.distanceMiles - b.distanceMiles || a.artist.localeCompare(b.artist));
   return { matches, excludedCount, locationLabel: point.label || (typeof origin === 'string' ? origin : 'your shared location'), windowStart, windowEnd };
 }

@@ -43,7 +43,7 @@ test('location searches persist the latest town and local zone across channels; 
       assert.equal(instance.store.listReminderUsers().length,from===sms?0:1);
       const reply=await instance.handleOnce(`location-${from}`,{from,body:'Dallas TX'});
       assert.match(reply,/Saved location: Dallas, TX.*Daily weekend reminders around 10 PM local time \(America\/Chicago\)/);
-      assert.match(reply,/Sample Daybreak Festival/);
+      assert.match(reply,/Sample Dawn/);
       const saved=instance.store.get(from);
       assert.equal(saved.location_lat,32.78);assert.equal(saved.location_timezone,'America/Chicago');
       const full=await instance.bot.handle({from,body:'FULL'});

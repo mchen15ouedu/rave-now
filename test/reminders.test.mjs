@@ -60,7 +60,7 @@ test('weekend search excludes earlier days and out-of-radius shows while preserv
     shows: [...shows, show('Far away artist', '2026-10-11', 'Far away'), show('City artist', '2026-10-11', 'Dallas TX', { locationSource: 'city', city: 'Dallas, TX', locationApproximate: true }), show('Unknown artist', '2026-10-11', null)],
     origin, geocoder, now: '2026-10-10', radiusMiles: 80,
   });
-  assert.deepEqual(result.matches.map(item => item.artist), ['City artist', 'Sunday artist', 'Saturday artist']);
+  assert.deepEqual(result.matches.map(item => item.artist), ['Saturday artist', 'City artist', 'Sunday artist']);
   assert.equal(result.excludedCount, 1);
   assert.equal(result.windowStart, '2026-10-09');
   assert.equal(result.windowEnd, '2026-10-11');

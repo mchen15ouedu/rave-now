@@ -36,9 +36,9 @@ test('FULL works on both channels before a location, includes today and all futu
     const reply = await bot.handle({ from, body: '  fUlL  ' });
     assert.match(reply, /upcoming|future/i);
     assert.doesNotMatch(reply, /Yesterday|temporarily unavailable|nearby shows/i);
-    const artists = ['Far future', 'New year', 'Year end', 'Beyond nearby window', 'Today'];
+    const artists = ['Today', 'Beyond nearby window', 'Year end', 'New year', 'Far future'];
     for (const artist of artists) assert.ok(reply.includes(artist), `Missing ${artist}: ${reply}`);
-    for (let index = 1; index < artists.length; index++) assert.ok(reply.indexOf(artists[index - 1]) < reply.indexOf(artists[index]), 'Future shows must have the latest date first');
+    for (let index = 1; index < artists.length; index++) assert.ok(reply.indexOf(artists[index - 1]) < reply.indexOf(artists[index]), 'The soonest upcoming show must precede later and distant-future shows');
     assert.equal(observations.sourceCalls, 1);
     assert.equal(observations.geocoderCalls, 0);
     assert.equal(store.get(from).active, 1);
@@ -58,7 +58,7 @@ test('FULL retains future events without an Address, City, or known venue and us
   for (const artist of ['Alpha', 'Zulu', 'Unknown place']) assert.ok(reply.includes(artist), artist);
   assert.doesNotMatch(reply, /Date not announced|Approx\. \d+ straight-line/);
   assert.ok(reply.indexOf('Alpha') < reply.indexOf('Zulu'));
-  assert.ok(reply.indexOf('Unknown place') < reply.indexOf('Alpha'));
+  assert.ok(reply.indexOf('Zulu') < reply.indexOf('Unknown place'));
   assert.match(reply, /Tokyo, Japan/);
   assert.match(reply, /Unknown place\n2026-10-07 \| Venue not announced\.\nLocation not announced\./);
   assert.match(reply, /Zulu\n2026-10-06 \| TBA\nLocation not announced\./);
@@ -103,7 +103,7 @@ test('FULL paginates every future event exactly once; MORE headings stay upcomin
     assert.match(reply, /^More upcoming shows:/);
   }
   assert.ok(pageCount > 1);
-  assert.deepEqual(seen, Array.from({ length: 18 }, (_, index) => 17 - index));
+  assert.deepEqual(seen, Array.from({ length: 18 }, (_, index) => index), 'MORE must continue from the soonest remaining date toward the future');
   assert.equal(bot.pages.size, 0);
   assert.match(await bot.handle({ from: whatsapp, body: 'MORE' }), /No more saved results/);
   assert.equal(observations.sourceCalls, 2);

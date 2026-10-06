@@ -25,7 +25,7 @@ The image uses Node.js 24, installs production dependencies from the lockfile, a
 
 The page requests location permission when opened; city/state/country or a US ZIP is available when permission is denied. If the embedded frame blocks location access, open your Space's direct app URL. Browser locations stay in page memory and do not register messaging users or enable reminders.
 
-The single **Location or artist** field supports location searches and artist filtering. Date buttons offer Today, Next 7 days, This weekend, This month, and Next 3 months. Results sort latest event date first. More than three matching DJ entries sharing a named event, location, and occurrence become one festival card; smaller lineups remain individual shows. Multi-day festivals show a date range and sort by their start date.
+The single **Location or artist** field supports location searches and artist filtering. Date buttons offer Today, Next 7 days, This weekend, This month, and Next 3 months. Results sort soonest upcoming date first. More than three matching DJ entries sharing a named event, location, and occurrence become one festival card; smaller lineups remain individual shows. Multi-day festivals show a date range and sort by their start date, soonest first.
 
 The default geocoder uses a bundled GeoNames city/US ZIP directory without a paid API key. The radius is **80 straight-line miles**, an approximate two-hour driving proxy. It does not calculate road travel time. Address takes priority over City, with approximate city/ZIP centers labeled where necessary. GeoNames data is CC BY 4.0; preserve `data/GEONAMES-LICENSE.md` and the app's attribution.
 

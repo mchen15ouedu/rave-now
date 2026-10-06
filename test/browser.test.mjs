@@ -25,8 +25,8 @@ async function server(t,browser={}) {
 test('browser FULL needs no location, includes every future show, and creates no messaging user store',async t=>{
  const {app,url,post}=await server(t,{geocoder:{resolve(){throw new Error('Full must not geocode');}}});
  const res=await post({view:'full',timeZone:'America/Chicago'}),data=await res.json();
- assert.equal(res.status,200);assert.equal(data.total,4);assert.equal(data.shows[0].artist,'Far future');
- assert.deepEqual(data.shows.map(show=>show.date),['2027-01-01','2026-10-11','2026-10-10','2026-10-09']);
+ assert.equal(res.status,200);assert.equal(data.total,4);assert.equal(data.shows[0].artist,'Address first');
+ assert.deepEqual(data.shows.map(show=>show.date),['2026-10-09','2026-10-10','2026-10-11','2027-01-01']);
  assert.ok(data.shows.some(show=>show.artist==='Location unknown'));assert.equal(data.locationLabel,null);
  assert.equal(app.store,undefined);assert.equal(app.ready,false);assert.equal(data.source.snapshot,true);
  const page=await fetch(url);assert.match(page.headers.get('permissions-policy'),/geolocation=\(self\)/);
@@ -65,12 +65,13 @@ test('browser collapses a large matching festival after filtering and retains ev
  const {post}=await server(t,{source:{load:async()=>({shows:festivalShows})},geocoder:{resolve:async()=>({lat:32.78,lng:-96.8,label:'Dallas',approximate:true})}});
  const res=await post({view:'nearby',latitude:32.78,longitude:-96.8,timeZone:'America/Chicago'}),data=await res.json();
  assert.equal(res.status,200);assert.equal(data.total,2);assert.equal(data.shows.length,2);
- const festival=data.shows[1];
+ const festival=data.shows[0];
  assert.equal(festival.type,'event');assert.equal(festival.event,'Example Festival');assert.equal(festival.artist,'Example Festival');
  assert.equal(festival.entryCount,100);assert.equal(festival.date,'2026-10-09');assert.equal(festival.dateEnd,'2026-10-10');
  assert.equal(festival.ticketUrl,'https://example.com/festival');
  assert.equal(new URL(festival.youtubeUrl).searchParams.get('search_query'),'Example Festival');
- assert.equal(data.shows[0].artist,'Independent DJ');
+ assert.equal(data.shows[1].artist,'Independent DJ');
+ assert.ok(festival.date<data.shows[1].date, 'A multi-day festival sorts by its upcoming start date');
 });
 
 test('festival threshold counts only entries inside the search window',async t=>{

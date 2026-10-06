@@ -21,7 +21,7 @@ The page requests location access when opened. Your browser controls its permiss
 
 Date filters offer **Today**, **Next 7 days**, **This weekend**, **This month**, and **Next 3 months**. Next 7 days includes today and the following six calendar days. Weekend results include the remaining Friday–Sunday dates. Month results include today through the last day of this month. Next 3 months ends the day before the same date three calendar months later, with shorter months handled at their last valid date. Searches use the accepted location's time zone and retain the last submitted location and artist when a date filter changes. Empty windows stay empty.
 
-Results sort by the **latest event date first**. When more than three matching DJ entries share a named event, location, and festival occurrence, the list shows that festival once with its date range and links. Three entries or fewer remain individual shows. Filtering happens before grouping; separate locations and occurrences stay separate. Festival groups sort by their start date. A dated event announcement can appear without a listed artist.
+Results sort by the **soonest upcoming date first**. When more than three matching DJ entries share a named event, location, and festival occurrence, the list shows that festival once with its date range and links. Three entries or fewer remain individual shows. Filtering happens before grouping; separate locations and occurrences stay separate. Festival groups sort by their start date, soonest first. A dated event announcement can appear without a listed artist.
 
 The default radius is **80 straight-line miles**, an approximation for a two-hour drive. Road routes, traffic, and actual driving times are not calculated. The bundled offline [GeoNames](https://www.geonames.org/) directory resolves cities and US ZIP codes without an external request. Address takes priority over City; unavailable street coordinates fall back to a labeled city or ZIP center. Add a state or country for ambiguous place names.
 
@@ -52,7 +52,7 @@ Try `INFO`, then `Dallas TX`. Use **Preview 10 PM reminder** to inspect the week
 | `INFO`, `SHOWS`, `START`, `JOIN` | Register the sender and request a location. |
 | A location | Save or replace the location and time zone, enable reminders, and return nearby shows in the selected window. |
 | `WEEKEND` | Return nearby upcoming Friday–Sunday shows using the saved location. |
-| `FULL` | Return all dated future events across all locations, latest date first, with no radius or date-window restriction. |
+| `FULL` | Return all dated future events across all locations, earliest date first, with no radius or date-window restriction. |
 | `MORE` | Return the next page of the previous list while its ten-minute session is available. |
 | `HELP`, `PRIVACY` | Explain commands or stored data. |
 | `STOP` | Stop replies and automatic reminders. |

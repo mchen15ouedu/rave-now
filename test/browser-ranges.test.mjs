@@ -26,13 +26,13 @@ test('weekend results never include earlier local days and UTC midnight does not
  assert.throws(()=>browserDateWindow('never',instant,'America/Chicago'),/Unsupported/);
 });
 
-test('all browser date options filter local and location-free artist searches with inclusive boundaries and latest dates first',async t=>{
+test('all browser date options filter local and location-free artist searches with inclusive boundaries and soonest dates first',async t=>{
  const dates=['2026-10-05','2026-10-06','2026-10-09','2026-10-11','2026-10-12','2026-10-13','2026-10-31','2026-11-01','2027-01-05','2027-01-06'];
  const shows=parseShows([['Artist','Event','Location','Address','City','Ticket Link','Show Time','YouTube (Most Popular Song)'],...dates.map(date=>['DJ Test','','Venue','','New York, NY','https://tickets.example/event',date,'https://youtu.be/artist'])]);
  const app=createHostedApp({env:{PORT:'0'},browser:{clock:()=>'2026-10-06',source:{load:async()=>({shows})},catalog:{load:async()=>({artists:['DJ Test'],promoters:[]})},geocoder:{resolveCity:async()=>({lat:40.7,lng:-74,label:'New York',timeZone:'America/New_York'}),resolve:async()=>({lat:40.7,lng:-74})}}});
  app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>new Promise(resolve=>app.server.close(resolve)));
  const post=async input=>{const res=await fetch(`http://127.0.0.1:${app.server.address().port}/api/browser/shows`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(res.status,200);return res.json();};
- const expected={today:[1],nearby:[4,3,2,1],weekend:[3,2],month:[6,5,4,3,2,1],'three-months':[8,7,6,5,4,3,2,1]};
+ const expected={today:[1],nearby:[1,2,3,4],weekend:[2,3],month:[1,2,3,4,5,6],'three-months':[1,2,3,4,5,6,7,8]};
  for(const [view,indexes] of Object.entries(expected)) {
   const local=await post({query:'location: New York',view});assert.deepEqual(local.shows.map(show=>show.date),indexes.map(index=>dates[index]));
   const global=await post({query:'DJ Test',view,timeZone:'America/New_York'});assert.deepEqual(global.shows.map(show=>show.date),indexes.map(index=>dates[index]));assert.equal(global.locationLabel,null);
@@ -45,7 +45,8 @@ test('fictional sample feed returns NYC and Brooklyn shows in the selected week 
  const app=createHostedApp({env:{},browser:{clock:()=>'2026-10-06',source:{load:async()=>({shows:parseShows(sample.rows),snapshotUpdatedAt:sample.metadata.updatedAt,sample:true})}}});
  const result=await app.browserApp.search({query:'New York',timeZone:'America/Chicago'});
  assert.equal(result.windowStart,'2026-10-06');assert.equal(result.windowEnd,'2026-10-12');
- assert.deepEqual(result.shows.map(show=>show.artist),['Sample Pulse','Sample Metro','Sample Tidal']);
+ assert.deepEqual(result.shows.map(show=>show.artist),['Sample Metro','Sample Tidal','Sample Pulse']);
+ assert.deepEqual(result.shows.map(show=>show.date),['2026-10-09','2026-10-09','2026-10-10']);
  assert.ok(result.shows.every(show=>show.distanceMiles<80));
  assert.ok(result.shows.some(show=>show.ticketUrl));
  assert.equal(result.source.updatedAt,'2026-10-05');

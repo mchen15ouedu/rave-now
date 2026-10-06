@@ -33,7 +33,7 @@ test('registration, fictional Dallas/Las Vegas/Los Angeles sample matches, STOP,
     assert.match(await app.handleOnce('demo-register',{from:sender,body:'info'}),/saved your WhatsApp number/);
     assert.equal(app.store.get(sender).phone,'+15550102026');
     const dallas=await app.handleOnce('demo-search',{from:sender,body:'Dallas TX'});
-    assert.match(dallas,/Sample Daybreak Festival/);assert.match(dallas,/Oct 5 - Oct 11/);assert.doesNotMatch(dallas,/Sample Mirage|Sample Horizon/);
+    assert.match(dallas,/Sample Dawn/);assert.match(dallas,/Oct 5 - Oct 11/);assert.doesNotMatch(dallas,/Sample Mirage|Sample Horizon/);
     const vegas=await app.bot.handle({from:sender,body:'Las Vegas NV'});
     for(const artist of ['Sample Mirage','Sample Prism','Sample Orbit'])assert.ok(vegas.includes(artist));
     const losAngeles=await app.bot.handle({from:sender,body:'Los Angeles CA'});
@@ -128,7 +128,7 @@ test('WhatsApp pins work; malformed pins and unsupported demo cities get helpful
   try{
     await app.bot.handle({from:sender,body:'INFO'});
     const reply=await app.bot.handle({from:sender,body:'',latitude:'32.78',longitude:'-96.8'});
-    assert.match(reply,/Sample Daybreak Festival/);assert.match(reply,/your shared location/);
+    assert.match(reply,/Sample Dawn/);assert.match(reply,/your shared location/);
     assert.match(await app.bot.handle({from:sender,body:'',latitude:'',longitude:'-96.8'}),/invalid/);
     assert.match(await app.bot.handle({from:sender,body:'London'}),/offline demo supports/);
   }finally{app.store.close();}
@@ -148,7 +148,7 @@ test('HELP and PRIVACY do not register and provider failures do not masquerade a
 
 test('long result lists paginate within Twilio body limit and expire on STOP',async()=>{
   const header=['Artist','Location','Address','Ticket Link','Show Time','YouTube (Most Popular Song)'];
-  const shows=parseShows([header,...Array.from({length:12},(_,i)=>[`Artist ${i}`,'SILO Dallas','100 Example Street, Dallas, TX 75201',`https://example.com/tickets/${'a'.repeat(200)}?artist=${i}`,'Fri, Oct 9, 2026',''])]);
+  const shows=parseShows([header,...Array.from({length:12},(_,i)=>[`Artist ${i}`,'SILO Dallas','100 Example Street, Dallas, TX 75201',`https://example.com/tickets/${'a'.repeat(200)}?artist=${i}`,`2026-10-${String(5+i%7).padStart(2,'0')}`,'']).reverse()]);
   const app=appForTest('demo',{source:{load:async()=>({shows})}});
   try{
     await app.bot.handle({from:sender,body:'INFO'});
@@ -162,6 +162,9 @@ test('long result lists paginate within Twilio body limit and expire on STOP',as
       assert.ok(pages<10);
     }
     assert.equal(visited.size,12);assert.ok(pages>1);
+    const orderedDays=[...visited].map(index=>5+index%7);
+    assert.deepEqual(orderedDays,[...orderedDays].sort((a,b)=>a-b), 'Nearby pagination must advance from the soonest dates toward the future');
+    assert.equal(orderedDays[0],5);assert.equal(orderedDays.at(-1),11);
     await app.bot.handle({from:sender,body:'STOP'});assert.equal(app.bot.pages.size,0);
   }finally{app.store.close();}
 });
@@ -178,7 +181,7 @@ test('live webhook rejects unsigned messages and simulator paths, accepts signed
   const start={...input,MessageSid:'SM'+'3'.repeat(32),Body:'START',OptOutType:'START'};
   response=await request(start,sign(start));assert.doesNotMatch(await response.text(),/<Message>/);assert.equal(app.store.get(sender).active,1);
   const pin={...input,MessageSid:'MM'+'4'.repeat(32),Body:'',Latitude:'32.78',Longitude:'-96.8'};
-  response=await request(pin,sign(pin));assert.match(await response.text(),/Sample Daybreak Festival/);
+  response=await request(pin,sign(pin));assert.match(await response.text(),/Sample Dawn/);
   const sms={...input,MessageSid:'SM'+'5'.repeat(32),From:'+15550102026',To:'+15550000000',Body:'SHOWS'};
   response=await request(sms,sign(sms));assert.match(await response.text(),/saved your SMS number/);
   const full={...sms,MessageSid:'SM'+'6'.repeat(32),Body:' full '};
