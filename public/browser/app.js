@@ -1,5 +1,8 @@
 const $ = (id) => document.getElementById(id);
-const state = { origin: null, lastSearch: null, pendingSearch: null, view: 'nearby', request: 0, geoRequest: 0, controller: null };
+const state = { origin: null, lastSearch: null, pendingSearch: null, view: 'nearby', request: 0, geoRequest: 0, controller: null, suggestionsLoaded: false, suggestionsTimer: null, suggestionsController: null };
+const searchTimeoutMs = 50000;
+const slowSearchMs = 4000;
+const suggestionsDelayMs = 1500;
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
 const rangeLabels = { today: 'Today', nearby: 'Next 7 days', weekend: 'This weekend', month: 'This month', 'three-months': 'Next 3 months', full: 'All upcoming shows' };
 const selectableRanges = ['today', 'nearby', 'weekend', 'month', 'three-months'];
@@ -93,8 +96,62 @@ function showCard(show) {
 }
 
 function status(text, error = false) {
+  $('location-status').replaceChildren();
   $('location-status').textContent = text;
   $('location-status').classList.toggle('error', error);
+}
+
+function showSearchError(message, input, request, canRetry) {
+  status(message, true);
+  if (!canRetry) return;
+  const retry = element('button', 'secondary', 'Try again');
+  retry.type = 'button';
+  retry.addEventListener('click', () => {
+    if (request !== state.request) return;
+    ++state.geoRequest;
+    loadShows({ ...input });
+  });
+  $('location-status').append(element('span', '', ' '), retry);
+}
+
+function stopSuggestions() {
+  clearTimeout(state.suggestionsTimer);
+  state.suggestionsTimer = null;
+  state.suggestionsController?.abort();
+  state.suggestionsController = null;
+}
+
+async function loadSuggestions() {
+  if (state.suggestionsLoaded || state.pendingSearch || state.controller) return;
+  const controller = state.suggestionsController = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  try {
+    const response = await fetch('/api/browser/artists', {
+      headers: { Accept: 'application/json' }, signal: controller.signal,
+      credentials: 'same-origin', cache: 'no-store',
+    });
+    const data = response.ok ? await response.json() : null;
+    if (controller.signal.aborted || state.suggestionsController !== controller || !Array.isArray(data?.artists)) return;
+    const suggestions = data.artists.filter(name => typeof name === 'string' && name.length <= 120).map(name => {
+      const option = element('option'); option.value = name; option.label = 'Artist'; return option;
+    });
+    $('artist-suggestions').replaceChildren(...suggestions);
+    state.suggestionsLoaded = true;
+  } catch {
+    // Suggestions are optional. Their availability cannot replace show results.
+  } finally {
+    clearTimeout(timeout);
+    if (state.suggestionsController === controller) state.suggestionsController = null;
+  }
+}
+
+function scheduleSuggestions() {
+  if (state.suggestionsLoaded) return;
+  clearTimeout(state.suggestionsTimer);
+  state.suggestionsTimer = setTimeout(() => {
+    state.suggestionsTimer = null;
+    loadSuggestions();
+  }, suggestionsDelayMs);
 }
 
 function updateRangeButtons() {
@@ -123,23 +180,42 @@ function updateFreshness(source) {
 }
 
 async function loadShows(input) {
+  stopSuggestions();
   state.controller?.abort();
   const request = ++state.request;
   const controller = state.controller = new AbortController();
+  let timeout, timedOut = false, succeeded = false, canRetry = true;
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      reject(new Error('The search took too long. Try again or enter a city.'));
+      controller.abort();
+    }, searchTimeoutMs);
+  });
+  const slowTimer = setTimeout(() => {
+    if (request === state.request) status('Still finding shows… You can enter a city or artist while this loads.');
+  }, slowSearchMs);
   state.pendingSearch = { ...input };
   $('show-grid').replaceChildren();
   $('show-grid').setAttribute('aria-busy', 'true');
+  $('feed-freshness').hidden = true;
   status('Finding shows…');
   try {
-    const response = await fetch('/api/browser/shows', {
-      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ ...input, view: state.view, timeZone }),
-      signal: controller.signal, credentials: 'same-origin', cache: 'no-store',
-    });
-    const data = await response.json().catch(() => ({}));
+    const result = (async () => {
+      const response = await fetch('/api/browser/shows', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ ...input, view: state.view, timeZone }),
+        signal: controller.signal, credentials: 'same-origin', cache: 'no-store',
+      });
+      return { response, data: await response.json().catch(() => ({})) };
+    })();
+    const { response, data } = await Promise.race([result, deadline]);
     if (request !== state.request) return;
-    if (!response.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Please enter a location or artist and try again.');
-    if (!Array.isArray(data.shows)) throw new Error('Please enter a location or artist and try again.');
+    if (!response.ok) {
+      canRetry = response.status >= 500 || response.status === 429;
+      throw new Error(typeof data.error === 'string' ? data.error : 'The show feed is temporarily unavailable. Please try again.');
+    }
+    if (!Array.isArray(data.shows)) throw new Error('The show feed returned an incomplete response. Please try again.');
     if (data.searchKind !== 'artist') state.origin = data.locationInput ? { location: data.locationInput } : input.query ? { location: input.query.replace(/^location:\s*/i, '') } : { ...input };
     state.lastSearch = data.searchKind === 'artist' ? { ...state.origin, query: input.query } : { ...state.origin };
     $('show-grid').replaceChildren(...data.shows.map(showCard));
@@ -152,18 +228,30 @@ async function loadShows(input) {
       const hasOrigin = typeof input.location === 'string' || Number.isFinite(input.latitude) && Number.isFinite(input.longitude);
       const scope = data.view === 'full' || !hasOrigin ? `${rangeLabel} · All locations` : `Near ${label} · ${rangeLabel}`;
       const saved = data.artistRegistration?.added ? ` Added “${data.artistRegistration.name}” to Artist List.`
-        : data.artistRegistration?.status === 'not-saved' ? ' This artist’s name has not been added to the list yet.' : '';
+        : data.artistRegistration?.status === 'not-saved' ? ' Artist list update could not be confirmed.' : '';
       status(`${data.shows.length ? name : `No shows found for ${name}`} · ${scope}.${saved}`);
     } else status(data.shows.length ? `Shows near ${label} · ${rangeLabel}` : `No shows near ${label} · ${rangeLabel}. Try another location, artist or date range.`);
+    succeeded = true;
   } catch (error) {
-    if (request !== state.request || error.name === 'AbortError') return;
-    status(error.message || 'Please enter a location or artist and try again.', true);
+    if (request !== state.request || error.name === 'AbortError' && !timedOut) return;
+    const message = timedOut ? 'The search took too long. Try again or enter a city.'
+      : error.name === 'TypeError' ? 'Could not connect to the show feed. Please try again.'
+      : error.message || 'The show feed is temporarily unavailable. Please try again.';
+    showSearchError(message, input, request, canRetry);
   } finally {
-    if (request === state.request) { state.pendingSearch = null; $('show-grid').setAttribute('aria-busy', 'false'); }
+    clearTimeout(timeout);
+    clearTimeout(slowTimer);
+    if (request === state.request) {
+      state.pendingSearch = null;
+      state.controller = null;
+      $('show-grid').setAttribute('aria-busy', 'false');
+      if (succeeded) scheduleSuggestions();
+    }
   }
 }
 
 function requestLocation() {
+  stopSuggestions();
   const geoRequest = ++state.geoRequest;
   ++state.request;
   state.controller?.abort();
@@ -220,19 +308,15 @@ for (const range of selectableRanges) $('range-' + range).addEventListener('clic
 // Choosing manual entry takes priority over a still-pending automatic lookup.
 $('city').addEventListener('input', () => {
   ++state.geoRequest;
+  if (!state.origin && state.pendingSearch?.latitude !== undefined && state.pendingSearch.query === undefined) {
+    ++state.request;
+    state.controller?.abort();
+    state.controller = null;
+    state.pendingSearch = null;
+    $('show-grid').setAttribute('aria-busy', 'false');
+  }
   if (!state.origin) status('Enter a city, ZIP code or artist name.');
 });
 
 window.addEventListener('pageshow', (event) => { if (event.persisted) requestLocation(); });
 requestLocation();
-
-// Native suggestions keep artist entry in the same field as location entry.
-fetch('/api/browser/artists', { headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store' })
-  .then(async (response) => response.ok ? response.json() : null)
-  .then((data) => {
-    if (!Array.isArray(data?.artists)) return;
-    const suggestions = data.artists.filter((name) => typeof name === 'string' && name.length <= 120).map((name) => {
-      const option = element('option');option.value = name;option.label = 'Artist';return option;
-    });
-    $('artist-suggestions').replaceChildren(...suggestions);
-  }).catch(() => {});

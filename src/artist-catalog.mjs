@@ -18,6 +18,51 @@ export class CatalogError extends Error {
   }
 }
 
+/** A cancelled visitor stops waiting, but leaves a bounded read for the next
+ * refresh to join. This helper is for reads only: mutations never use it. */
+export function createReadCoalescer({ timeoutMs = 40_000 } = {}) {
+  const jobs = new Map();
+  let active = 0;
+  const budget = Math.min(40_000, Math.max(1, Number(timeoutMs) || 40_000));
+  const read = async (key, operation, { signal } = {}) => {
+    signal?.throwIfAborted();
+    let job = jobs.get(key);
+    if (!job) {
+      if (active >= 4) throw new CatalogError('UNAVAILABLE', 'The feed is busy. Please try again shortly.');
+      active++;
+      const controller = new AbortController();
+      let timeout;
+      const promise = new Promise((resolve, reject) => {
+        timeout = setTimeout(() => {
+          controller.abort();
+          reject(new CatalogError('UNAVAILABLE', 'The feed took too long. Please try again.'));
+        }, budget);
+        Promise.resolve().then(() => operation(controller.signal)).then(resolve, reject);
+      });
+      job = { promise };
+      jobs.set(key, job);
+      const cleanup = () => { clearTimeout(timeout); active--; if (jobs.get(key) === job) jobs.delete(key); };
+      promise.then(cleanup, cleanup);
+    }
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', cancelled);
+        callback(value);
+      };
+      const cancelled = () => finish(reject, signal.reason ?? new DOMException('Read cancelled', 'AbortError'));
+      signal?.addEventListener('abort', cancelled, { once: true });
+      if (signal?.aborted) cancelled();
+      job.promise.then(value => finish(resolve, value), error => finish(reject, error));
+    });
+  };
+  // Retire an outdated generation without disrupting its existing waiters.
+  read.invalidate = key => jobs.delete(key);
+  return read;
+}
+
 /** Keep readable spelling; normalization is used only for comparisons. */
 export function cleanArtistName(name) {
   if (typeof name !== 'string' || /[\p{Cc}\p{Cf}]/u.test(name)) {
@@ -107,7 +152,9 @@ async function readResponse(response) {
 export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snapshotFile, clock = () => new Date() } = {}) {
   const configured = Boolean(env.ARTIST_CATALOG_URL || env.ARTIST_CATALOG_SECRET);
   const snapshot = path.resolve(projectDir, snapshotFile || 'data/name-catalog.json');
-  void clock; // Accepted consistently with the other providers; reads are not cached.
+  const read = createReadCoalescer({ timeoutMs: 35_000 });
+  let cachedNames, namesVersion = 0;
+  const currentTime = () => Number(clock());
 
   async function request(action, name, { signal } = {}) {
     if (!env.ARTIST_CATALOG_URL || typeof env.ARTIST_CATALOG_SECRET !== 'string' || env.ARTIST_CATALOG_SECRET.length < 32 || env.ARTIST_CATALOG_SECRET.length > 512) {
@@ -143,8 +190,17 @@ export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snap
     async load({ signal } = {}) {
       try {
         if (signal?.aborted) throw new CatalogError('CANCELLED', 'The artist request was cancelled.');
-        const value = configured ? await request('readCatalog', undefined, { signal }) : JSON.parse(await readFile(snapshot, { encoding: 'utf8', signal }));
-        return { artists: catalogNames(value.artists), promoters: catalogNames(value.promoters), canAdd: configured };
+        if (cachedNames && cachedNames.expiresAt > currentTime()) return { ...cachedNames.value, artists: [...cachedNames.value.artists], promoters: [...cachedNames.value.promoters] };
+        cachedNames = undefined;
+        const version = namesVersion;
+        const value = await read('catalog', async sharedSignal => {
+          const result = configured ? await request('readCatalog', undefined, { signal: sharedSignal }) : JSON.parse(await readFile(snapshot, { encoding: 'utf8', signal: sharedSignal }));
+          sharedSignal.throwIfAborted();
+          const value = { artists: catalogNames(result.artists), promoters: catalogNames(result.promoters), canAdd: configured };
+          if (version === namesVersion) cachedNames = { value, expiresAt: currentTime() + 60_000 };
+          return value;
+        }, { signal });
+        return { ...value, artists: [...value.artists], promoters: [...value.promoters] };
       } catch (error) {
         if (error instanceof CatalogError) throw error;
         if (signal?.aborted) throw new CatalogError('CANCELLED', 'The artist request was cancelled.');
@@ -158,13 +214,26 @@ export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snap
       let saved;
       try { saved = cleanArtistName(result.name); } catch { throw unavailable(); }
       if (typeof result.added !== 'boolean' || normalizeArtistName(saved) !== normalizeArtistName(clean)) throw unavailable();
+      namesVersion++;
+      read.invalidate('catalog');
+      if (cachedNames && cachedNames.expiresAt > currentTime()) {
+        if (!cachedNames.value.artists.some(artist => normalizeArtistName(artist) === normalizeArtistName(saved))) cachedNames.value.artists.push(saved);
+      } else cachedNames = undefined;
       return { name: saved, added: result.added };
     },
     async readShows({ signal } = {}) {
       if (signal?.aborted) throw new CatalogError('CANCELLED', 'The show request was cancelled.');
       if (!configured) throw new CatalogError('NOT_CONFIGURED', 'Live show fetching is not connected yet.');
-      const result = await request('readShows', undefined, { signal });
-      return { rows: showRows(result.rows) };
+      try {
+        const rows = await read('shows', async sharedSignal => {
+          const result = await request('readShows', undefined, { signal: sharedSignal });
+          return showRows(result.rows);
+        }, { signal });
+        return { rows: rows.map(row => [...row]) };
+      } catch (error) {
+        if (signal?.aborted) throw new CatalogError('CANCELLED', 'The show request was cancelled.');
+        throw error;
+      }
     },
   };
 }

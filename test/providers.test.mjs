@@ -213,3 +213,74 @@ test('an aborted source request propagates cancellation', async () => {
   controller.abort();
   await assert.rejects(createShowSource(liveConfig(async () => assert.fail('Must not fetch'))).load({ signal: controller.signal }), { name: 'AbortError' });
 });
+
+
+function deferredRead() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+test('concurrent cold event reads share upstream work while cancellation affects only that visitor', async () => {
+  const started = deferredRead(), pending = deferredRead();
+  let calls = 0, upstreamSignal;
+  const source = createShowSource({ mode: 'apps-script', bridge: { readShows: async ({ signal }) => {
+    calls++; upstreamSignal = signal; started.resolve(); return pending.promise;
+  } } });
+  const visitor = new AbortController();
+  const first = source.load({ signal: visitor.signal });
+  const cancelled = assert.rejects(first, error => error.name === 'AbortError');
+  await started.promise;
+  const second = source.load();
+  visitor.abort();
+  await cancelled;
+  assert.equal(upstreamSignal.aborted, false);
+  pending.resolve({ rows: data });
+  assert.equal((await second).shows.length, 1);
+  assert.equal(calls, 1);
+  await source.load();
+  assert.equal(calls, 1, 'The completed shared read warmed the fresh cache');
+});
+
+test('a refresh joins a read abandoned by its only visitor instead of starting duplicate work', async () => {
+  const started = deferredRead(), pending = deferredRead();
+  let calls = 0;
+  const source = createShowSource({ mode: 'apps-script', bridge: { readShows: async () => { calls++; started.resolve(); return pending.promise; } } });
+  const visitor = new AbortController();
+  const previous = source.load({ signal: visitor.signal });
+  const cancelled = assert.rejects(previous, error => error.name === 'AbortError');
+  await started.promise; visitor.abort(); await cancelled;
+  const refresh = source.load();
+  pending.resolve({ rows: data });
+  assert.equal((await refresh).shows.length, 1);
+  assert.equal(calls, 1);
+});
+
+test('expired concurrent refreshes share a visible outage and recover without stale fallback', async () => {
+  let time = 0, calls = 0;
+  const failed = deferredRead(), started = deferredRead();
+  const source = createShowSource({ mode: 'apps-script', clock: () => time, bridge: { readShows: async () => {
+    calls++;
+    if (calls === 2) { started.resolve(); return failed.promise; }
+    return { rows: data };
+  } } });
+  await source.load(); time = 60_000;
+  const a = source.load(), b = source.load();
+  const rejected = Promise.all([a, b].map(promise => assert.rejects(promise, error => error.name === 'ShowSourceError' && !error.message.includes('private'))));
+  await started.promise; failed.reject(new Error('private provider detail')); await rejected;
+  assert.equal(calls, 2);
+  await source.load(); assert.equal(calls, 3);
+});
+
+test('a shared event read has a bounded deadline even when a provider does not honor cancellation', async () => {
+  let calls = 0, upstreamSignal;
+  const source = createShowSource({ mode: 'apps-script', readTimeoutMs: 20, bridge: { readShows: async ({ signal }) => {
+    calls++; upstreamSignal = signal;
+    if (calls === 1) return new Promise(() => {});
+    return { rows: data };
+  } } });
+  await assert.rejects(source.load(), error => error.name === 'ShowSourceError');
+  assert.equal(upstreamSignal.aborted, true);
+  assert.equal((await source.load()).shows.length, 1);
+  assert.equal(calls, 2);
+});

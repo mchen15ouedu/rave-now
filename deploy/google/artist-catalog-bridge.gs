@@ -34,16 +34,21 @@ function doPost(e) {
     if (input.action !== 'readCatalog' && input.action !== 'ensureArtist' && input.action !== 'readShows') return catalogOutput_({ ok: false, code: 'INVALID_ACTION' });
     var config = catalogConfiguration_(properties);
     var name = input.action === 'ensureArtist' ? catalogCleanName_(input.name) : null;
-    // Protect both reads and deduplicating additions from overlapping requests.
+    var workbook = SpreadsheetApp.openById(config.workbookId);
+    if (input.action === 'readShows') return catalogOutput_({ ok: true, rows: catalogShowRows_(workbook, config.showSheetId) });
+    if (input.action === 'readCatalog') {
+      var readArtistSheet = catalogSheet_(workbook, config.artistSheetId, 'Artist List');
+      var readPromoterSheet = catalogSheet_(workbook, config.promoterSheetId, 'Promoter List');
+      return catalogOutput_({ ok: true, artists: catalogNames_(readArtistSheet), promoters: catalogNames_(readPromoterSheet) });
+    }
+    // Only deduplicating writes require a lock; independent reads must not wait
+    // behind a refresh or an optional artist-suggestion request.
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(10000)) return catalogOutput_({ ok: false, code: 'BUSY' });
     try {
-      var workbook = SpreadsheetApp.openById(config.workbookId);
-      if (input.action === 'readShows') return catalogOutput_({ ok: true, rows: catalogShowRows_(workbook, config.showSheetId) });
       var artistSheet = catalogSheet_(workbook, config.artistSheetId, 'Artist List');
       var promoterSheet = catalogSheet_(workbook, config.promoterSheetId, 'Promoter List');
       var artists = catalogNames_(artistSheet);
-      if (input.action === 'readCatalog') return catalogOutput_({ ok: true, artists: artists, promoters: catalogNames_(promoterSheet) });
       var key = catalogNameKey_(name);
       for (var i = 0; i < artists.length; i++) {
         if (catalogNameKey_(artists[i]) === key) return catalogOutput_({ ok: true, name: artists[i], added: false });

@@ -8,7 +8,7 @@ import {LocationError} from '../src/locations.mjs';
 const headers=['Artist','Event','Location','City','Address','Ticket Link','Show Time','YouTube (Most Popular Song)'];
 const row=(artist,date='2026-10-09',event='',city='Dallas, TX')=>[artist,event,'Venue',city,'','https://tickets.example/event',date,'https://youtu.be/artist'];
 const records=parseShows([headers,row('Tiësto'),row('Other DJ'),row('Tiësto','2027-01-01'),row('Paris'),row('Steve Angello')]);
-async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensureArtist,loadCatalog}={}) {
+async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensureArtist,loadCatalog,loadSource}={}) {
  const writes=[];
  const catalog={load:loadCatalog||(async()=>({artists,promoters:['SILO Dallas'],canAdd:true})),ensureArtist:ensureArtist||(async(name)=>{writes.push(name);return{name,added:true};})};
  const geo=geocoder||{resolveCity:async(query)=>{
@@ -16,7 +16,7 @@ async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensur
   if(query==='Springfield')throw new LocationError('AMBIGUOUS','Add a state.');
   throw new LocationError('NOT_FOUND','Location not found.');
  },resolve:async()=>({lat:32.78,lng:-96.8})};
- const app=createHostedApp({env:{PORT:'0'},browser:{clock:()=>'2026-10-05',source:{load:async()=>({shows})},catalog,geocoder:geo}});
+ const app=createHostedApp({env:{PORT:'0'},browser:{clock:()=>'2026-10-05',source:{load:loadSource||(async()=>({shows}))},catalog,geocoder:geo}});
  app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>new Promise(resolve=>app.server.close(resolve)));
  const url=`http://127.0.0.1:${app.server.address().port}`;
  const post=(input,extra={})=>fetch(url+'/api/browser/shows',{method:'POST',headers:{'Content-Type':'application/json',...extra},body:JSON.stringify({view:'nearby',timeZone:'America/Chicago',...input})});
@@ -90,4 +90,84 @@ test('artist filtering precedes festival grouping and retains event context',asy
 
 test('native suggestion endpoint exposes only artist names',async t=>{
  const {url}=await setup(t);const result=await (await fetch(url+'/api/browser/artists')).json();assert.deepEqual(result,{artists:['Tiësto','Paris']});
+});
+
+test('required event source loads before the optional catalog for one-box searches',async t=>{
+ const calls=[];
+ const {post}=await setup(t,{
+  loadSource:async()=>{calls.push('source');return{shows:records};},
+  loadCatalog:async()=>{calls.push('catalog');return{artists:['Tiësto'],promoters:[],canAdd:true};},
+ });
+ const response=await post({query:'Dallas'});
+ assert.equal(response.status,200);
+ assert.equal((await response.json()).searchKind,'location');
+ assert.deepEqual(calls,['source','catalog']);
+});
+
+test('event source failure does not start a catalog request or expose provider details',async t=>{
+ const calls=[];
+ const {post,writes}=await setup(t,{
+  loadSource:async()=>{calls.push('source');throw new Error('SECRET event provider failure');},
+  loadCatalog:async()=>{calls.push('catalog');return{artists:[],promoters:[],canAdd:true};},
+ });
+ const response=await post({query:'Dallas'});
+ assert.equal(response.status,503);
+ const result=await response.json();
+ assert.match(result.error,/show feed.*unavailable/i);
+ assert.doesNotMatch(JSON.stringify(result),/SECRET/);
+ assert.deepEqual(calls,['source']);assert.deepEqual(writes,[]);
+});
+
+test('optional catalog outage keeps resolvable cities and feed artist searches usable without writes',async t=>{
+ const {post,writes}=await setup(t,{loadCatalog:async()=>{throw new Error('SECRET catalog failure');}});
+ const cityResponse=await post({query:'Dallas'});assert.equal(cityResponse.status,200);
+ const city=await cityResponse.json();assert.equal(city.searchKind,'location');assert.equal(city.locationLabel,'Dallas');assert.equal(city.total,4);
+ const exactResponse=await post({query:'STEVE ANGELLO'});assert.equal(exactResponse.status,200);
+ const exact=await exactResponse.json();assert.equal(exact.searchKind,'artist');assert.equal(exact.artistQuery,'Steve Angello');assert.equal(exact.shows.length,1);
+ const partialResponse=await post({query:'angello'});assert.equal(partialResponse.status,200);
+ const partial=await partialResponse.json();assert.equal(partial.searchKind,'artist');assert.equal(partial.shows.length,1);assert.equal(partial.shows[0].artist,'Steve Angello');
+ // Feed artists retain their exact-match priority over a city-like name.
+ const collision=await (await post({query:'Paris'})).json();assert.equal(collision.searchKind,'artist');assert.equal(collision.shows[0].artist,'Paris');
+ assert.doesNotMatch(JSON.stringify([city,exact,partial,collision]),/SECRET/);assert.deepEqual(writes,[]);
+});
+
+test('ambiguous and clearly invalid town queries remain location errors during catalog outages',async t=>{
+ const {post,writes}=await setup(t,{loadCatalog:async()=>{throw new Error('Catalog unavailable');}});
+ const ambiguous=await post({query:'Springfield'});assert.equal(ambiguous.status,400);
+ assert.match((await ambiguous.json()).error,/state/i);
+ for(const query of ['99999','Unknown City, TX'])assert.equal((await post({query})).status,400,query);
+ assert.deepEqual(writes,[]);
+});
+
+test('unknown automatic queries require explicit classification when the catalog is unavailable',async t=>{
+ const {post,writes}=await setup(t,{loadCatalog:async()=>{throw new Error('SECRET catalog unavailable');}});
+ const response=await post({query:'New DJ'});assert.equal(response.status,503);
+ const result=await response.json();assert.match(result.error,/artist:/i);assert.match(result.error,/location:/i);
+ assert.doesNotMatch(JSON.stringify(result),/SECRET/);assert.deepEqual(writes,[]);
+});
+
+test('explicit artist queries return feed results with honest unsaved status during catalog outages',async t=>{
+ const {post,writes}=await setup(t,{loadCatalog:async()=>{throw new Error('Catalog unavailable');}});
+ const response=await post({query:'artist: Steve Angello'});assert.equal(response.status,200);
+ const result=await response.json();assert.equal(result.searchKind,'artist');assert.equal(result.shows.length,1);assert.equal(result.shows[0].artist,'Steve Angello');
+ assert.deepEqual(result.artistRegistration,{name:'Steve Angello',added:false,status:'not-saved'});
+ const newResponse=await post({query:'artist: New DJ'});assert.equal(newResponse.status,200);
+ const fresh=await newResponse.json();assert.equal(fresh.total,0);assert.equal(fresh.artistRegistration.added,false);assert.equal(fresh.artistRegistration.status,'not-saved');
+ assert.deepEqual(writes,[]);
+});
+
+test('an explicit artist prefix does not bypass the promoter guard for new names',async t=>{
+ const {post,writes}=await setup(t);
+ const response=await post({query:'artist: SILO Dallas'});assert.equal(response.status,400);
+ assert.match((await response.json()).error,/promoter/i);assert.deepEqual(writes,[]);
+});
+
+test('explicit locations and GPS searches do not depend on or call the artist catalog',async t=>{
+ let catalogCalls=0;
+ const {post,writes}=await setup(t,{loadCatalog:async()=>{catalogCalls++;throw new Error('Catalog should not be called');}});
+ const locationResponse=await post({query:'location: Dallas',location:'Paris, France'});assert.equal(locationResponse.status,200);
+ const location=await locationResponse.json();assert.equal(location.searchKind,'location');assert.equal(location.locationInput,'Dallas');
+ const gpsResponse=await post({latitude:32.78,longitude:-96.8});assert.equal(gpsResponse.status,200);
+ assert.equal((await gpsResponse.json()).total,4);
+ assert.equal(catalogCalls,0);assert.deepEqual(writes,[]);
 });

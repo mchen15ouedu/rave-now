@@ -12,9 +12,19 @@ class Element {
  replaceChildren(...children){this.children=children;}
 }
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-const response=(data)=>({ok:true,json:async()=>data});
-async function page({geolocation=true,fetchResult,artists=[]}={}) {
- const nodes=new Map(),calls=[],geo={requests:[]},events={};
+const response=(data)=>({ok:true,status:200,json:async()=>data});
+async function page({geolocation=true,fetchResult,artists=[],artistsResult}={}) {
+ const nodes=new Map(),calls=[],requests=[],artistCalls=[],geo={requests:[]},events={},timers=new Map();
+ nodes.set('artist-suggestions',new Element());
+ let timerId=0,elapsed=0;
+ const advanceTimers=milliseconds=>{
+  elapsed+=milliseconds;
+  while(true) {
+   const due=[...timers].filter(([,timer])=>timer.at<=elapsed).sort((a,b)=>a[1].at-b[1].at)[0];
+   if(!due)break;
+   timers.delete(due[0]);due[1].callback();
+  }
+ };
  const context={
   document:{
    getElementById(id){if(!nodes.has(id))nodes.set(id,new Element());return nodes.get(id);},
@@ -23,14 +33,17 @@ async function page({geolocation=true,fetchResult,artists=[]}={}) {
   navigator:geolocation?{geolocation:{getCurrentPosition(success,failure,options){geo.requests.push({success,failure,options});}}}:{},
   window:{addEventListener(name,callback){events[name]=callback;}},
   Intl,Date,URL,AbortController,console,
+  setTimeout(callback,delay){const id=++timerId;timers.set(id,{callback,at:elapsed+delay});return id;},
+  clearTimeout(id){timers.delete(id);},
   fetch:async(url,options)=>{
-   if(url==='/api/browser/artists')return response({artists});
-   const call={url,options,payload:JSON.parse(options.body)};calls.push(call);
+   const call={url,options,...(options.body?{payload:JSON.parse(options.body)}:{})};requests.push(call);
+   if(url==='/api/browser/artists'){artistCalls.push(call);return artistsResult?artistsResult(call):response({artists});}
+   calls.push(call);
    return fetchResult?fetchResult(call):response({shows:[],days:7,searchKind:'location',locationInput:call.payload.query,locationLabel:call.payload.query||call.payload.location||'your current location'});
   },
  };
  vm.runInNewContext(await readFile(new URL('../public/browser/app.js',import.meta.url),'utf8'),context);
- await tick();return {nodes,calls,geo,events};
+ await tick();return {nodes,calls,requests,artistCalls,geo,events,advanceTimers};
 }
 function submit(nodes,location) {
  nodes.get('city').value=location;
@@ -259,13 +272,15 @@ test('artist queries retain a typed location, and failed locations never replace
 });
 
 test('artist suggestions use names, and all-location results explain their scope and registration status',async()=>{
- const {nodes,calls}=await page({geolocation:false,artists:['Tiësto','Paris'],fetchResult:()=>response({shows:[],searchKind:'artist',artistQuery:'New DJ',view:'full',artistRegistration:{name:'New DJ',added:true}})});
- assert.deepEqual(nodes.get('artist-suggestions').children.map(option=>option.value),['Tiësto','Paris']);
+ const {nodes,calls,artistCalls,advanceTimers}=await page({geolocation:false,artists:['Tiësto','Paris'],fetchResult:()=>response({shows:[],searchKind:'artist',artistQuery:'New DJ',view:'full',artistRegistration:{name:'New DJ',added:true}})});
+ assert.equal(artistCalls.length,0);
  submit(nodes,'New DJ');await tick();assert.equal(calls[0].payload.location,undefined);
+ advanceTimers(1500);await tick();
+ assert.deepEqual(nodes.get('artist-suggestions').children.map(option=>option.value),['Tiësto','Paris']);
  assert.match(nodes.get('location-status').textContent,/All upcoming shows.*All locations/);
  assert.match(nodes.get('location-status').textContent,/Added “New DJ” to Artist List/);
  const failed=await page({geolocation:false,fetchResult:()=>response({shows:[],searchKind:'artist',artistQuery:'New DJ',view:'full',artistRegistration:{name:'New DJ',added:false,status:'not-saved'}})});
- submit(failed.nodes,'New DJ');await tick();assert.match(failed.nodes.get('location-status').textContent,/has not been added/);
+ submit(failed.nodes,'New DJ');await tick();assert.match(failed.nodes.get('location-status').textContent,/Artist list update could not be confirmed/);
 });
 
 test('an artist appearance keeps the festival name and ticket and YouTube links',async()=>{
@@ -274,4 +289,160 @@ test('an artist appearance keeps the festival name and ticket and YouTube links'
  submit(nodes,'Tiësto');await tick();const card=nodes.get('show-grid').children[0];
  assert.equal(card.children[0].textContent,'Tiësto');assert.ok(descendants(card).some(node=>node.textContent==='Big Festival'));
  assert.deepEqual(descendants(card).filter(node=>node.tag==='a').map(node=>node.textContent),['Tickets','YouTube']);
+});
+
+
+test('startup finishes the show search before it requests optional artist suggestions',async()=>{
+ const pending=[];
+ const {nodes,calls,artistCalls,geo,advanceTimers}=await page({fetchResult:()=>new Promise(resolve=>pending.push(resolve)),artists:['Optional DJ']});
+ advanceTimers(30000);await tick();assert.equal(artistCalls.length,0);
+ geo.requests[0].success({coords:{latitude:40.71,longitude:-74.01}});
+ advanceTimers(10000);await tick();
+ assert.equal(calls.length,1);assert.equal(artistCalls.length,0);
+ pending[0](response({shows:[{artist:'First show',date:'2026-10-09'}],locationLabel:'New York',source:{snapshot:false}}));await tick();
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'First show');
+ assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ advanceTimers(1499);await tick();assert.equal(artistCalls.length,0);
+ advanceTimers(1);await tick();assert.equal(artistCalls.length,1);
+ assert.deepEqual(nodes.get('artist-suggestions').children.map(option=>option.value),['Optional DJ']);
+ assert.match(nodes.get('location-status').textContent,/Shows near New York/);
+});
+
+test('a new search cancels queued suggestions until its own results have rendered',async()=>{
+ const pending=[];
+ const {nodes,calls,artistCalls,advanceTimers}=await page({geolocation:false,fetchResult:call=>call.payload.query==='Dallas TX'?response({shows:[],locationLabel:'Dallas'}):new Promise(resolve=>pending.push(resolve))});
+ submit(nodes,'Dallas TX');await tick();advanceTimers(1000);
+ submit(nodes,'New York NY');
+ advanceTimers(1500);await tick();assert.equal(artistCalls.length,0);
+ assert.equal(calls.length,2);assert.match(nodes.get('location-status').textContent,/Finding shows/);
+ pending[0](response({shows:[{artist:'New York show',date:'2026-10-10'}],locationLabel:'New York'}));await tick();
+ advanceTimers(1500);await tick();assert.equal(artistCalls.length,1);
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'New York show');
+});
+
+test('a new show request aborts in-flight suggestions and ignores their stale response',async()=>{
+ const pendingArtists=[],pendingShows=[];
+ const {nodes,artistCalls,advanceTimers}=await page({geolocation:false,artistsResult:()=>new Promise(resolve=>pendingArtists.push(resolve)),fetchResult:call=>call.payload.query==='Dallas TX'?response({shows:[],locationLabel:'Dallas'}):new Promise(resolve=>pendingShows.push(resolve))});
+ submit(nodes,'Dallas TX');await tick();advanceTimers(1500);await tick();
+ assert.equal(artistCalls.length,1);
+ submit(nodes,'Los Angeles CA');assert.equal(artistCalls[0].options.signal.aborted,true);
+ pendingArtists[0](response({artists:['Stale DJ']}));await tick();
+ assert.equal(nodes.get('artist-suggestions').children.length,0);
+ assert.match(nodes.get('location-status').textContent,/Finding shows/);
+ pendingShows[0](response({shows:[{artist:'LA show',date:'2026-10-09'}],locationLabel:'Los Angeles'}));await tick();
+ advanceTimers(1500);await tick();assert.equal(artistCalls.length,2);
+ pendingArtists[1](response({artists:['Fresh DJ']}));await tick();
+ assert.deepEqual(nodes.get('artist-suggestions').children.map(option=>option.value),['Fresh DJ']);
+ assert.match(nodes.get('location-status').textContent,/Los Angeles/);
+});
+
+test('optional suggestions time out without changing successful show results or status',async()=>{
+ let finishArtists;
+ const {nodes,artistCalls,advanceTimers}=await page({geolocation:false,artistsResult:()=>new Promise(resolve=>finishArtists=resolve),fetchResult:()=>response({shows:[{artist:'Available show',date:'2026-10-09'}],locationLabel:'Dallas'})});
+ submit(nodes,'Dallas TX');await tick();const acceptedStatus=nodes.get('location-status').textContent;
+ advanceTimers(1500);await tick();assert.equal(artistCalls.length,1);
+ advanceTimers(30000);await tick();assert.equal(artistCalls[0].options.signal.aborted,true);
+ finishArtists(response({artists:['Too late']}));await tick();
+ assert.equal(nodes.get('artist-suggestions').children.length,0);
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'Available show');
+ assert.equal(nodes.get('location-status').textContent,acceptedStatus);
+ assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ assert.equal(nodes.get('location-status').children.length,0);
+});
+
+test('a stalled GPS search shows progress, ends after 50 seconds, and retries only on request',async()=>{
+ const pending=[];
+ const {nodes,calls,artistCalls,geo,advanceTimers}=await page({fetchResult:()=>new Promise(resolve=>pending.push(resolve))});
+ selectRange(nodes,'weekend');
+ geo.requests[0].success({coords:{latitude:40.71,longitude:-74.01}});
+ assert.equal(nodes.get('show-grid').attributes['aria-busy'],'true');
+ advanceTimers(3999);await tick();assert.match(nodes.get('location-status').textContent,/^Finding shows/);
+ advanceTimers(1);await tick();assert.match(nodes.get('location-status').textContent,/Still finding shows/);
+ advanceTimers(46000);await tick();
+ assert.equal(calls.length,1);assert.equal(artistCalls.length,0);assert.equal(calls[0].options.signal.aborted,true);
+ assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ assert.match(nodes.get('location-status').textContent,/took too long/);
+ assert.doesNotMatch(nodes.get('location-status').textContent,/No shows/);
+ const retry=nodes.get('location-status').children.find(node=>node.tag==='button');
+ assert.equal(retry.textContent,'Try again');retry.handlers.click();
+ assert.equal(calls.length,2);assert.equal(calls[1].payload.latitude,40.71);assert.equal(calls[1].payload.longitude,-74.01);assert.equal(calls[1].payload.view,'weekend');
+ pending[1](response({shows:[{artist:'Retry result',date:'2026-10-10'}],locationLabel:'New York',view:'weekend',rangeLabel:'This weekend'}));await tick();
+ pending[0](response({shows:[{artist:'Late original',date:'2026-10-09'}],locationLabel:'Old city'}));await tick();
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'Retry result');
+ assert.match(nodes.get('location-status').textContent,/New York.*This weekend/);
+ assert.equal(nodes.get('location-status').children.length,0);
+});
+
+test('the search deadline also bounds a stalled response body',async()=>{
+ let finishBody;
+ const {nodes,calls,advanceTimers}=await page({geolocation:false,fetchResult:()=>({ok:true,status:200,json:()=>new Promise(resolve=>finishBody=resolve)})});
+ submit(nodes,'Dallas TX');await tick();advanceTimers(50000);await tick();
+ assert.match(nodes.get('location-status').textContent,/took too long/);
+ assert.equal(calls[0].options.signal.aborted,true);assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ finishBody({shows:[{artist:'Late body',date:'2026-10-09'}],locationLabel:'Dallas'});await tick();
+ assert.equal(nodes.get('show-grid').children.length,0);assert.match(nodes.get('location-status').textContent,/took too long/);
+});
+
+test('typing manual input aborts an already-started automatic GPS feed request',async()=>{
+ const pending=[];
+ const {nodes,calls,geo,advanceTimers}=await page({fetchResult:()=>new Promise(resolve=>pending.push(resolve))});
+ geo.requests[0].success({coords:{latitude:32.78,longitude:-96.8}});
+ nodes.get('city').value='New York NY';nodes.get('city').handlers.input();
+ assert.equal(calls[0].options.signal.aborted,true);assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ advanceTimers(50000);await tick();assert.match(nodes.get('location-status').textContent,/^Enter a city/);
+ assert.equal(nodes.get('location-status').children.length,0);
+ submit(nodes,'New York NY');assert.equal(calls[1].payload.latitude,undefined);assert.equal(calls[1].payload.query,'New York NY');
+ pending[1](response({shows:[{artist:'Manual result',date:'2026-10-09'}],locationInput:'New York NY',locationLabel:'New York'}));await tick();
+ pending[0](response({shows:[{artist:'GPS result',date:'2026-10-09'}],locationLabel:'Dallas'}));await tick();
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'Manual result');
+ assert.match(nodes.get('location-status').textContent,/New York/);
+});
+
+test('an older deadline cannot replace a newer successful search with an error or slow status',async()=>{
+ let finishOld;
+ const {nodes,calls,advanceTimers}=await page({geolocation:false,fetchResult:call=>call.payload.query==='Dallas TX'?new Promise(resolve=>finishOld=resolve):response({shows:[{artist:'Current result',date:'2026-10-10'}],locationLabel:'New York'})});
+ submit(nodes,'Dallas TX');advanceTimers(4000);await tick();
+ submit(nodes,'New York NY');await tick();const currentStatus=nodes.get('location-status').textContent;
+ advanceTimers(50000);await tick();
+ assert.equal(calls.length,2);assert.equal(nodes.get('location-status').textContent,currentStatus);
+ assert.equal(nodes.get('location-status').children.length,0);
+ finishOld(response({shows:[],locationLabel:'Dallas'}));await tick();
+ assert.equal(nodes.get('show-grid').children[0].children[0].textContent,'Current result');
+});
+
+test('a transient feed error stays an error and offers retry without an automatic POST',async()=>{
+ const {nodes,calls,artistCalls,advanceTimers}=await page({geolocation:false,fetchResult:()=>({ok:false,status:503,json:async()=>({error:'The live feed is temporarily unavailable. Please try again.'})})});
+ submit(nodes,'New York NY');await tick();advanceTimers(100000);await tick();
+ assert.equal(calls.length,1);assert.equal(artistCalls.length,0);
+ assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');
+ assert.match(nodes.get('location-status').textContent,/temporarily unavailable/);
+ assert.doesNotMatch(nodes.get('location-status').textContent,/No shows/);
+ assert.equal(nodes.get('location-status').children.find(node=>node.tag==='button').textContent,'Try again');
+ assert.equal(nodes.get('feed-freshness').hidden,true);
+});
+
+test('an incomplete feed is reported as an error rather than an empty show list',async()=>{
+ const {nodes,artistCalls,advanceTimers}=await page({geolocation:false,fetchResult:()=>response({locationLabel:'New York'})});
+ submit(nodes,'New York NY');await tick();advanceTimers(1500);await tick();
+ assert.match(nodes.get('location-status').textContent,/incomplete response/);
+ assert.doesNotMatch(nodes.get('location-status').textContent,/No shows/);
+ assert.equal(nodes.get('show-grid').attributes['aria-busy'],'false');assert.equal(artistCalls.length,0);
+});
+
+test('restoring from browser history cancels pending suggestions and starts from fresh GPS',async()=>{
+ const pendingArtists=[];
+ const {nodes,calls,artistCalls,geo,events,advanceTimers}=await page({artistsResult:()=>new Promise(resolve=>pendingArtists.push(resolve))});
+ submit(nodes,'Dallas TX');await tick();advanceTimers(1500);await tick();
+ assert.equal(artistCalls.length,1);
+ events.pageshow({persisted:true});assert.equal(artistCalls[0].options.signal.aborted,true);
+ assert.equal(geo.requests.length,2);assert.match(nodes.get('location-status').textContent,/Finding your location/);
+ pendingArtists[0](response({artists:['Old suggestion']}));await tick();
+ assert.equal(nodes.get('artist-suggestions').children.length,0);
+ advanceTimers(30000);await tick();assert.equal(artistCalls.length,1);
+ geo.requests[1].success({coords:{latitude:40.71,longitude:-74.01}});await tick();
+ assert.equal(calls.at(-1).payload.latitude,40.71);assert.equal(calls.at(-1).payload.location,undefined);
+ assert.equal(calls.at(-1).payload.view,'nearby');assert.equal(nodes.get('city').value,'');
+ advanceTimers(1500);await tick();assert.equal(artistCalls.length,2);
+ pendingArtists[1](response({artists:['Current suggestion']}));await tick();
+ assert.deepEqual(nodes.get('artist-suggestions').children.map(option=>option.value),['Current suggestion']);
 });

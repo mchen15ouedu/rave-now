@@ -50,6 +50,21 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
   const sourceMeta={label:'Event feed',snapshot:config.mode==='demo'};
   const assets=new Map([['/',['index.html','text/html; charset=utf-8']],['/browser/app.js',['app.js','text/javascript; charset=utf-8']],['/browser/profiles.js',['profiles.js','text/javascript; charset=utf-8']],['/browser/style.css',['style.css','text/css; charset=utf-8']]]);
   const files=new Map();let inFlight=0;
+  async function optionalCatalog(signal,timeoutMs) {
+    if (timeoutMs<=0) return {artists:[],promoters:[],available:false};
+    const deadline=AbortSignal.timeout(Math.ceil(timeoutMs));
+    const limited=signal?AbortSignal.any([signal,deadline]):deadline;
+    let onAbort;
+    const aborted=new Promise((_,reject)=>{onAbort=()=>reject(limited.reason);limited.addEventListener('abort',onAbort,{once:true});});
+    try {
+      limited.throwIfAborted();
+      const names=await Promise.race([catalog.load({signal:limited}),aborted]);
+      return {...names,available:true};
+    } catch {
+      signal?.throwIfAborted();
+      return {artists:[],promoters:[],available:false};
+    } finally {limited.removeEventListener('abort',onAbort);}
+  }
   async function resolveOrigin(input,{signal}={}) {
     const hasCoordinates=input.latitude!==undefined||input.longitude!==undefined;
     if (hasCoordinates) {
@@ -60,6 +75,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
     return geocoder.resolveCity?geocoder.resolveCity(input.location,{signal}):geocoder.resolve(input.location,{signal,cache:false});
   }
   async function search(input,{signal}={}) {
+    const startedAt=performance.now();
     if (!input||typeof input!=='object'||Array.isArray(input)) throw new BrowserError(400,'Invalid search');
     const view=input.view||'nearby';
     if (!Object.hasOwn(browserRangeLabels,view)) throw new BrowserError(400,'Choose a supported show range');
@@ -74,8 +90,10 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
       if (kind==='location') {
         origin=await resolveOrigin({location:query},{signal});
       } else {
-        const names=await catalog.load({signal});
         loaded=await source.load({signal});
+        // Event data is required; artist suggestions must not block a usable
+        // city search or consume the whole remaining request deadline.
+        const names=await optionalCatalog(signal,Math.max(0,Math.min(5_000,40_000-(performance.now()-startedAt))));
         const knownNames=[...names.artists,...loaded.shows.filter(show=>show.type!=='event').map(show=>show.artist)];
         const key=artistKey(query);
         const exact=knownNames.find(name=>artistKey(name)===key);
@@ -86,6 +104,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
           catch(error) {
             if (!(error instanceof LocationError) || error.code!=='NOT_FOUND') throw error;
             if (looksLikeLocation(query)) throw error;
+            if (!names.available) throw new BrowserError(503,'Artist names are temporarily unavailable. Use location: City or artist: Name to clarify your search.');
             if (matchingArtistNames(query,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
             artist=true;
           }
@@ -94,7 +113,9 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,cl
           searchKind='artist';artistQuery=exact||query;
           const inCatalog=names.artists.some(name=>artistKey(name)===artistKey(artistQuery));
           // Partial queries match existing names; they are not new artists.
-          if (!inCatalog && (exact || partial.length===0)) {
+          if (!names.available) registration={name:artistQuery,added:false,status:'not-saved'};
+          else if (!inCatalog && (exact || partial.length===0)) {
+            if (matchingArtistNames(artistQuery,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
             try {registration=await catalog.ensureArtist(artistQuery,{signal});}
             catch(error) {
               if (signal?.aborted || error.name==='AbortError') throw error;

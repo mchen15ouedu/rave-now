@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parseShows, parseShowDate } from './shows.mjs';
-import { createArtistCatalog } from './artist-catalog.mjs';
+import { createArtistCatalog, createReadCoalescer } from './artist-catalog.mjs';
 
 export class ShowSourceError extends Error {
   constructor(message, options) {
@@ -67,6 +67,7 @@ export function createShowSource(config = {}) {
   const clock = config.clock || Date.now;
   const cacheTtlMs = Math.min(Math.max(Number(config.cacheTtlMs ?? 60000) || 0, 0), 60000);
   const maxRows = Math.min(Math.max(Number(config.maxRows) || 10000, 1), 10000);
+  const read = createReadCoalescer({ timeoutMs: config.readTimeoutMs ?? 40_000 });
   let cached;
   let auth;
   let bridge;
@@ -134,31 +135,43 @@ export function createShowSource(config = {}) {
     return values.values;
   }
 
+  async function readFresh(signal) {
+    const rows = await loadRows(signal);
+    signal.throwIfAborted();
+    let shows;
+    try {
+      shows = parseShows(rows);
+    } catch (error) {
+      throw new ShowSourceError(error.message, { cause: error });
+    }
+    let snapshotUpdatedAt, sample = false;
+    if(mode === 'demo') {
+      try {
+        const metadata=JSON.parse(await readFile(config.snapshotMetadataFile || `${config.snapshotFile}.meta.json`,{encoding:'utf8',signal}));
+        sample=metadata.sample===true;
+        if(typeof metadata.updatedAt==='string' && /^\d{4}-\d{2}-\d{2}$/.test(metadata.updatedAt) && parseShowDate(metadata.updatedAt))snapshotUpdatedAt=metadata.updatedAt;
+      } catch(error) {if(signal?.aborted || error?.name==='AbortError')throw error;}
+      if(!snapshotUpdatedAt && typeof config.snapshotUpdatedAt==='string' && /^\d{4}-\d{2}-\d{2}$/.test(config.snapshotUpdatedAt) && parseShowDate(config.snapshotUpdatedAt))snapshotUpdatedAt=config.snapshotUpdatedAt;
+    }
+    signal.throwIfAborted();
+    const value = { shows, loadedAt: new Date(clock()).toISOString(), source: mode === 'demo' ? 'snapshot' : mode==='apps-script'?'apps-script':'google-sheets', ...(snapshotUpdatedAt?{snapshotUpdatedAt}:{}), ...(sample?{sample:true}:{}), warnings: [...shows.warnings] };
+    if (cacheTtlMs) cached = { value, expiresAt: clock() + cacheTtlMs };
+    return value;
+  }
+
   return {
     async load({ signal } = {}) {
       signal?.throwIfAborted();
       if (cached && cached.expiresAt > clock()) return { ...cached.value, warnings: [...cached.value.warnings] };
-      // Expired results are discarded: live errors never silently fall back to stale or demo shows.
+      // Expired results are discarded; an outage never serves stale or demo data.
       cached = undefined;
-      const rows = await loadRows(signal);
-      signal?.throwIfAborted();
-      let shows;
-      try {
-        shows = parseShows(rows);
-      } catch (error) {
-        throw new ShowSourceError(error.message, { cause: error });
+      let value;
+      try { value = await read('events', readFresh, { signal }); }
+      catch (error) {
+        if (signal?.aborted || error?.name === 'AbortError') throw error;
+        if (error instanceof ShowSourceError) throw error;
+        throw new ShowSourceError('The current event feed is temporarily unavailable.', { cause: error });
       }
-      let snapshotUpdatedAt, sample = false;
-      if(mode === 'demo') {
-        try {
-          const metadata=JSON.parse(await readFile(config.snapshotMetadataFile || `${config.snapshotFile}.meta.json`,{encoding:'utf8',signal}));
-          sample=metadata.sample===true;
-          if(typeof metadata.updatedAt==='string' && /^\d{4}-\d{2}-\d{2}$/.test(metadata.updatedAt) && parseShowDate(metadata.updatedAt))snapshotUpdatedAt=metadata.updatedAt;
-        } catch(error) {if(signal?.aborted || error?.name==='AbortError')throw error;}
-        if(!snapshotUpdatedAt && typeof config.snapshotUpdatedAt==='string' && /^\d{4}-\d{2}-\d{2}$/.test(config.snapshotUpdatedAt) && parseShowDate(config.snapshotUpdatedAt))snapshotUpdatedAt=config.snapshotUpdatedAt;
-      }
-      const value = { shows, loadedAt: new Date(clock()).toISOString(), source: mode === 'demo' ? 'snapshot' : mode==='apps-script'?'apps-script':'google-sheets', ...(snapshotUpdatedAt?{snapshotUpdatedAt}:{}), ...(sample?{sample:true}:{}), warnings: [...shows.warnings] };
-      if (cacheTtlMs) cached = { value, expiresAt: clock() + cacheTtlMs };
       return { ...value, warnings: [...value.warnings] };
     },
   };

@@ -180,12 +180,13 @@ test('readShows respects cancellation before and during the provider request', a
   const catalog = createArtistCatalog({ env, fetchImpl: async () => { calls++; return json({ ok: true, rows: [showHeaders] }); } });
   await assert.rejects(catalog.readShows({ signal: cancelled.signal }), error => error.code === 'CANCELLED');
   assert.equal(calls, 0);
-  const active = new AbortController();
-  const pending = createArtistCatalog({ env, fetchImpl: (url, options) => new Promise((resolve, reject) => {
-    options.signal.addEventListener('abort', () => reject(new DOMException('private failure', 'AbortError')), { once: true });
-    active.abort();
-  }) });
-  await assert.rejects(pending.readShows({ signal: active.signal }), error => error.code === 'CANCELLED');
+  const active = new AbortController(), started = deferredCatalog(), response = deferredCatalog();
+  const pending = createArtistCatalog({ env, fetchImpl: async () => { started.resolve(); return response.promise; } });
+  const waiting = pending.readShows({ signal: active.signal });
+  const rejected = assert.rejects(waiting, error => error.code === 'CANCELLED');
+  await started.promise; active.abort(); await rejected;
+  response.resolve(json({ ok: true, rows: [showHeaders] }));
+  await pending.readShows();
 });
 
 test('readShows retains the 2 MiB response cap for event data', async () => {
@@ -281,7 +282,7 @@ test('bridge readShows uses only the fixed workbook and Upcoming Shows tab, retu
   assert.deepEqual(fixture.showRanges, [{ row: 1, column: 1, count: 2, width: 9 }]);
   assert.deepEqual(fixture.writes, []);
   assert.deepEqual(fixture.formats, []);
-  assert.deepEqual(fixture.log, ['lock', 'open', 'release']);
+  assert.deepEqual(fixture.log, ['open']);
 });
 
 test('bridge readShows rejects changed schemas and sheet names without returning partial data', async () => {
@@ -290,7 +291,7 @@ test('bridge readShows rejects changed schemas and sheet names without returning
     const fixture = await bridgeFixture(options);
     assert.deepEqual(fixture.post(request), { ok: false, code: 'INVALID_STRUCTURE' });
     assert.equal(fixture.writes.length, 0);
-    assert.equal(fixture.log.at(-1), 'release');
+    assert.deepEqual(fixture.log, ['open']);
   }
 });
 
@@ -300,7 +301,7 @@ test('bridge readShows checks row and column limits before reading instead of tr
     const fixture = await bridgeFixture(options);
     assert.deepEqual(fixture.post(request), { ok: false, code: 'LIMIT_EXCEEDED' });
     assert.deepEqual(fixture.showRanges, []);
-    assert.equal(fixture.log.at(-1), 'release');
+    assert.deepEqual(fixture.log, ['open']);
   }
   const empty = await bridgeFixture({ showRows: [showHeaders] });
   assert.deepEqual(empty.post(request), { ok: true, rows: [showHeaders] });
@@ -311,6 +312,17 @@ test('bridge reads fixed name columns only and ignores requested workbook/range 
   assert.deepEqual(fixture.post({ action: 'readCatalog', secret: env.ARTIST_CATALOG_SECRET, spreadsheetId: 'other', range: 'A:Z' }), { ok: true, artists: ['Tiësto'], promoters: ['Insomniac'] });
   assert.deepEqual(fixture.opens, ['example-workbook']);
   assert.equal(fixture.writes.length, 0);
+});
+
+test('bridge readers remain available while an artist writer holds the script lock', async () => {
+  const fixture = await bridgeFixture({ busy: true });
+  const request = { secret: env.ARTIST_CATALOG_SECRET };
+  assert.equal(fixture.post({ ...request, action: 'readCatalog' }).ok, true);
+  assert.equal(fixture.post({ ...request, action: 'readShows' }).ok, true);
+  assert.deepEqual(fixture.log, ['open', 'open']);
+  assert.equal(fixture.post({ ...request, action: 'ensureArtist', name: 'Sample New DJ' }).code, 'BUSY');
+  assert.deepEqual(fixture.writes, []);
+  assert.deepEqual(fixture.log, ['open', 'open', 'open', 'lock']);
 });
 
 test('bridge normalizes duplicate additions under the lock and writes only artist Name B', async () => {
@@ -339,5 +351,84 @@ test('bridge uses literal rich text for formula-looking input, and stops safely 
   assert.equal(changed.log.at(-1), 'release');
   const busy = await bridgeFixture({ busy: true });
   assert.equal(busy.post(body).code, 'BUSY');
-  assert.equal(busy.opens.length, 0);
+  assert.equal(busy.opens.length, 1);
+  assert.deepEqual(busy.writes, []);
+  assert.deepEqual(busy.log, ['open', 'lock']);
+});
+
+
+function deferredCatalog() {
+  let resolve;
+  const promise = new Promise(yes => { resolve = yes; });
+  return { promise, resolve };
+}
+
+test('catalog refreshes share a cold read, and a cancelled visitor does not poison its replacement', async () => {
+  const pending = deferredCatalog(), started = deferredCatalog();
+  let calls = 0, upstreamSignal;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (url, options) => {
+    calls++; upstreamSignal = options.signal; started.resolve(); return pending.promise;
+  } });
+  const visitor = new AbortController();
+  const previous = catalog.load({ signal: visitor.signal });
+  const cancelled = assert.rejects(previous, error => error.code === 'CANCELLED');
+  await started.promise; visitor.abort(); await cancelled;
+  const refresh = catalog.load();
+  assert.equal(upstreamSignal.aborted, false);
+  pending.resolve(json({ ok: true, artists: ['Sample DJ'], promoters: [] }));
+  assert.deepEqual((await refresh).artists, ['Sample DJ']);
+  assert.equal(calls, 1);
+});
+
+test('catalog cache expires at sixty seconds, exposes fresh outages, and reflects a successful addition immediately', async () => {
+  let time = 0, reads = 0, writes = 0, fail = false;
+  const catalog = createArtistCatalog({ env, clock: () => time, fetchImpl: async (url, options) => {
+    const payload = JSON.parse(options.body);
+    if (payload.action === 'ensureArtist') { writes++; return json({ ok: true, name: payload.name, added: true }); }
+    reads++;
+    if (fail) return json({ ok: false, code: 'UNAVAILABLE' });
+    return json({ ok: true, artists: ['Sample Original'], promoters: [] });
+  } });
+  await catalog.load(); time = 59_000;
+  await catalog.ensureArtist('Sample New');
+  assert.deepEqual((await catalog.load()).artists, ['Sample Original', 'Sample New']);
+  assert.equal(reads, 1); assert.equal(writes, 1);
+  time = 60_000; fail = true;
+  await assert.rejects(catalog.load(), unavailable);
+  assert.equal(reads, 2, 'Adding a name must not extend the age of the old catalog');
+});
+
+test('an older catalog response cannot overwrite the catalog refreshed after an artist addition', async () => {
+  const old = deferredCatalog(), started = deferredCatalog();
+  let reads = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (url, options) => {
+    const payload = JSON.parse(options.body);
+    if (payload.action === 'ensureArtist') return json({ ok: true, name: payload.name, added: true });
+    reads++;
+    if (reads === 1) { started.resolve(); return old.promise; }
+    return json({ ok: true, artists: ['Sample Added'], promoters: [] });
+  } });
+  const previous = catalog.load(); await started.promise;
+  await catalog.ensureArtist('Sample Added');
+  assert.deepEqual((await catalog.load()).artists, ['Sample Added']);
+  old.resolve(json({ ok: true, artists: [], promoters: [] })); await previous;
+  assert.deepEqual((await catalog.load()).artists, ['Sample Added']);
+  assert.equal(reads, 2);
+});
+
+test('concurrent show reads share only read work and failed artist mutations are never retried', async () => {
+  const pending = deferredCatalog(), started = deferredCatalog();
+  let reads = 0, writes = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (url, options) => {
+    const action = JSON.parse(options.body).action;
+    if (action === 'ensureArtist') { writes++; throw new Error('private mutation failure'); }
+    reads++; started.resolve(); return pending.promise;
+  } });
+  const a = catalog.readShows(), b = catalog.readShows(); await started.promise;
+  pending.resolve(json({ ok: true, rows: [showHeaders, showRow] }));
+  const [first, second] = await Promise.all([a, b]);
+  assert.equal(reads, 1); first.rows[1][0] = 'Changed locally';
+  assert.notEqual(first.rows[1][0], second.rows[1][0]);
+  await assert.rejects(catalog.ensureArtist('Sample New'), unavailable);
+  assert.equal(writes, 1);
 });
