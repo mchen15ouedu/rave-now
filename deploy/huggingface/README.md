@@ -48,3 +48,7 @@ Hugging Face's default Space disk is temporary. Registrations, saved messaging l
 The reminder worker sends during the ten-minute window after 10 PM in each saved location's time zone. Downtime beyond that window skips the day's reminder. An hourly health check may help detect availability, but scheduled jobs and Space restarts do not guarantee continuous operation or preserve data.
 
 See [Hugging Face Docker Spaces](https://huggingface.co/docs/hub/spaces-sdks-docker), [Space storage](https://huggingface.co/docs/hub/spaces-storage), and [GitHub scheduled workflow behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
+## Private text feedback
+
+The Docker build includes the browser Whisper assets. For durable complaint transcripts, use a private HF Dataset repository and configure server variable `FEEDBACK_HF_REPO` plus server secret `FEEDBACK_HF_TOKEN`. The token needs read/write access to that repository. No paid inference endpoint is required. Users review the transcript and explicitly send it; recordings stay on the device. See the root README for owner export and joint review.

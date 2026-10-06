@@ -24,6 +24,8 @@ jobs:
           package-manager-cache: false
       - name: Install locked dependencies
         run: corepack pnpm@10.11.0 install --frozen-lockfile
+      - name: Build browser Whisper assets
+        run: corepack pnpm@10.11.0 run build:feedback
       - name: Syntax check
         run: corepack pnpm@10.11.0 run check
       - name: Test without external accounts

@@ -10,6 +10,7 @@ Install [Node.js 24 or later](https://nodejs.org/), clone the repository, and ru
 
 ```sh
 npm install
+npm run build:feedback
 npm run browser
 ```
 
@@ -36,6 +37,24 @@ The default radius is **80 straight-line miles**, an approximation for a two-hou
 These are saved links only. The app does not sign into providers, verify account ownership, import follows or listening history, infer music taste, or change show recommendations from these links. AI taste analysis and provider OAuth are not implemented.
 
 Browser locations stay in page memory for searches and clear on reload. Browser searches do not register a phone number, open the messaging database, or enable reminders. Music-profile URLs remain on the current device unless you clear them.
+
+## Voice feedback
+
+**Give feedback** opens a small form. Tap **Record voice**, speak for up to 60 seconds, then tap **Stop**. Whisper transcribes the recording on your device. Review or edit the text, then press **Send feedback**. Typing works too. Opening the form does not request microphone access or download the model; recording and transcription begin only when requested.
+
+Only submitted text, a random submission ID, and a server timestamp are saved to a **private Hugging Face Dataset repository**. Audio is not uploaded or stored. There is no public complaint-list endpoint. Drafts stay in page memory and disappear on reload. Cancellation or an uncertain save keeps the same ID for an explicit retry to avoid duplicates.
+
+The first transcription downloads Whisper model files, then the browser caches them when supported. Older devices or slow networks may take too long; users can always type instead. Microphone recording requires HTTPS or localhost. When embedding the app, the parent iframe must allow microphone access; the direct app URL works without that iframe restriction.
+
+For your own deployment, create a private HF Dataset repository. Set server variable `FEEDBACK_HF_REPO=your-account/your-private-feedback` and server secret `FEEDBACK_HF_TOKEN` to a token permitted to read and write that repository. Keep both off the browser and out of Git. The app checks that the destination is private before saving. An unconfigured sample app reports that saving was not confirmed; it does not claim to save complaints locally.
+
+An owner can export the text for review with those environment variables set:
+
+```sh
+node scripts/export-feedback.mjs > feedback-private.json
+```
+
+Keep the export private. Ask Codex to analyze the exported complaints, group recurring themes, cite representative feedback, and propose improvements for discussion. Choose changes together before implementation; feedback does not trigger automatic code changes. The inbox is limited to 2,000 records, with at most 120 confirmed submissions per server hour. Archive it privately before reaching that limit.
 
 ## Try the message simulator
 
@@ -92,6 +111,7 @@ The Docker image exposes port **7860** and runs the browser service independentl
 Run the automated tests and syntax checks before submitting a change:
 
 ```sh
+npm run build:feedback
 npm test
 npm run check
 ```

@@ -5,7 +5,7 @@ The public repository is a runnable browser demo and a local SMS/WhatsApp simula
 ## Local development
 
 1. Fork the repository and create a branch for your change.
-2. Install Node.js 24 or later and run `npm install` from the project root.
+2. Install Node.js 24 or later and run `npm install` then `npm run build:feedback` from the project root.
 3. Run `npm run browser` and open `http://localhost:7860` for the browser app. This command regenerates current-date sample events.
 4. Run `npm start` and open `http://127.0.0.1:8787` for the local message simulator. Its calendar date is fixed at `2026-10-05` and it sends no real messages.
 5. Run `npm test` and `npm run check` before opening a pull request.

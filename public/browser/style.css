@@ -44,3 +44,5 @@ a{color:#1458b0;text-underline-offset:3px}
 footer{font-size:11px;color:#666;line-height:1.5;margin:22px 0}
 footer a{color:inherit}
 @media(max-width:420px){main{margin:24px auto;padding:0 16px}label{font-size:21px}button{padding:10px 12px}.show-card{padding:18px 0}}
+
+textarea{width:100%;font:inherit;font-size:16px;padding:10px 12px;border:1px solid #b7b7b7;border-radius:5px;resize:vertical}textarea:focus-visible{outline:2px solid #1458b0;outline-offset:3px}.feedback-voice{display:flex;gap:8px}.feedback-voice button{font-size:14px;min-height:38px}#feedback-status{font-size:14px;line-height:1.5;min-height:21px}#feedback-status.error{color:#a12520}button:disabled{opacity:.55;cursor:default}

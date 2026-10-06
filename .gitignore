@@ -10,3 +10,6 @@ node_modules/
 *.pem
 *.key
 work/
+
+public/browser/vendor/
+feedback-private*.json

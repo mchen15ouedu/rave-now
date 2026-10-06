@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/browser/style.css">
   <script type="module" src="/browser/app.js"></script>
   <script type="module" src="/browser/profiles.js"></script>
+  <script type="module" src="/browser/feedback.js"></script>
 </head>
 <body>
   <main>
@@ -52,7 +53,17 @@
     <p id="location-status" role="status" aria-live="polite">Finding your location…</p>
     <p id="feed-freshness" hidden></p>
     <section id="show-grid" aria-label="Nearby shows" aria-busy="false"></section>
-    <footer>Location data: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
+    <footer><button id="feedback-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="feedback-dialog">Give feedback</button><br>Location data: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
+    <dialog id="feedback-dialog" aria-labelledby="feedback-title">
+      <h2 id="feedback-title">Give feedback</h2>
+      <p class="profile-note">What could be better? Record up to 60 seconds or type below.</p>
+      <div class="feedback-voice"><button id="feedback-record" type="button">🎙 Record voice</button><button id="feedback-stop" type="button" hidden>Stop</button></div>
+      <label for="feedback-text">Your feedback</label>
+      <textarea id="feedback-text" rows="5" maxlength="2000" placeholder="Tell us what you don’t like or what could improve."></textarea>
+      <p class="profile-note">Voice is transcribed on your device. Review the text before sending. Only the text you send is saved privately for app improvements.</p>
+      <p id="feedback-status" role="status" aria-live="polite"></p>
+      <div class="profile-actions"><button id="feedback-cancel" class="secondary" type="button">Close</button><button id="feedback-submit" type="button">Send feedback</button></div>
+    </dialog>
   </main>
 </body>
 </html>

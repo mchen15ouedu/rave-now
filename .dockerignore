@@ -12,6 +12,8 @@
 !data/**
 !scripts/
 !scripts/**
+!scripts/
+!scripts/**
 
 # Exclude credentials and runtime data even if placed in a source directory.
 **/.env
@@ -26,3 +28,5 @@
 **/*.db-*
 **/node_modules/
 **/.git/
+
+public/browser/vendor/

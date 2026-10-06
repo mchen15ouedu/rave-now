@@ -17,6 +17,8 @@ COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
 COPY --chown=node:node data ./data
 COPY --chown=node:node scripts ./scripts
+RUN node scripts/build-feedback-assets.mjs
+COPY --chown=node:node scripts ./scripts
 
 EXPOSE 7860
 CMD ["node", "scripts/start-browser.mjs"]

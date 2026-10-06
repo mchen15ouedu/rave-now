@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { createFeedbackHandler } from './feedback.mjs';
 import path from 'node:path';
 import { projectDir } from './config.mjs';
 import { createShowSource } from './providers.mjs';
@@ -43,14 +44,17 @@ const publicFields=['id','artist','event','type','entryCount','venue','address',
 /** Browser searches share show selection rules without registering a messaging
  * user, opening SQLite, or retaining the visitor's location.
  */
-export function createBrowserHandler({env=process.env,source,geocoder,catalog,verifier,clock=()=>new Date(),messagingReady=false}={}) {
+export function createBrowserHandler({env=process.env,source,geocoder,catalog,verifier,feedbackStore,clock=()=>new Date(),messagingReady=false}={}) {
   const config=configForBrowser(env);
+  const handleFeedback=createFeedbackHandler({env,store:feedbackStore});
   source??=createShowSource(config);
   catalog??=createArtistCatalog({env});
   verifier??=createArtistVerifier();
   geocoder??=env.BROWSER_GEOCODER==='google'?new GoogleLocationProvider({apiKey:env.GOOGLE_MAPS_API_KEY}):new CityLocationProvider();
   const sourceMeta={label:'Event feed',snapshot:config.mode==='demo'};
   const assets=new Map([['/',['index.html','text/html; charset=utf-8']],['/browser/app.js',['app.js','text/javascript; charset=utf-8']],['/browser/profiles.js',['profiles.js','text/javascript; charset=utf-8']],['/browser/style.css',['style.css','text/css; charset=utf-8']]]);
+  assets.set('/browser/feedback.js',['feedback.js','text/javascript; charset=utf-8']);
+  assets.set('/browser/whisper-client.js',['whisper-client.js','text/javascript; charset=utf-8']);
   const files=new Map();let inFlight=0;
   async function optionalCatalog(signal,timeoutMs) {
     if (timeoutMs<=0) return {artists:[],promoters:[],available:false};
@@ -170,11 +174,14 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
   }
   const handle=async(req,res)=>{
     if (req.method==='GET' && req.url==='/healthz') {send(res,200,{ok:true,mode:messagingReady?'live':'browser',browserReady:true,messagingReady,ready:messagingReady});return true;}
-    const asset=assets.get(req.url);
+    if (await handleFeedback(req,res)) return true;
+    let asset=assets.get(req.url);
+    const vendor=/^\/browser\/vendor\/(whisper-worker\.bundle\.js(?:\.LEGAL\.txt)?|ort-wasm-simd-threaded(?:\.jsep)?\.(?:mjs|wasm))$/.exec(req.url);
+    if (vendor) asset=['vendor/'+vendor[1],vendor[1].endsWith('.wasm')?'application/wasm':vendor[1].endsWith('.txt')?'text/plain; charset=utf-8':'text/javascript; charset=utf-8'];
     if (req.method==='GET' && asset) {
-      if (!files.has(asset[0])) files.set(asset[0],await readFile(path.join(projectDir,'public/browser',asset[0]),'utf8'));
-      res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self' https://huggingface.co");
-      res.setHeader('Permissions-Policy','geolocation=(self), camera=(), microphone=()');
+      if (!files.has(asset[0])) files.set(asset[0],await readFile(path.join(projectDir,'public/browser',asset[0])));
+      res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://huggingface.co https://*.hf.co https://cdn-lfs.huggingface.co; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self' https://huggingface.co");
+      res.setHeader('Permissions-Policy','geolocation=(self), camera=(), microphone=(self)');
       send(res,200,files.get(asset[0]),asset[1]);return true;
     }
     if (req.method==='GET' && req.url==='/api/browser/status') {send(res,200,{radiusMiles:config.radiusMiles,days:config.days,messagingReady,sourceLabel:sourceMeta.label,locationMethod:env.BROWSER_GEOCODER==='google'?'geocoding':'city-centers'});return true;}
