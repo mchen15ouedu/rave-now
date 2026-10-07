@@ -145,6 +145,24 @@ export function initFeedback(document, window, dependencies = {}) {
       nodes.dialog.setAttribute('open', '');
     }
     nodes.text.focus();
+    if (dependencies.onReopen && confirmedSubmission && phase === 'idle') void refreshSaved();
+  }
+
+  async function refreshSaved() {
+    if (destroyed || phase !== 'idle' || !confirmedSubmission || confirmedSubmission.text !== nodes.text.value.trim()) return;
+    const token = ++generation, abortController = new AbortController();
+    controller = abortController; phase = 'processing'; updateControls();
+    try {
+      const message = await dependencies.onReopen(confirmedSubmission.receipt, {
+        signal: abortController.signal,
+        status(message, error = false) { if (token === generation) status(message, error, false); },
+      });
+      if (token === generation && typeof message === 'string') status(message, false, false);
+    } catch {
+      if (token === generation) status('Submission saved. Status is temporarily unavailable; check again later.', true, false);
+    } finally {
+      if (token === generation) { controller = null; phase = 'idle'; updateControls(); }
+    }
   }
 
   function close() {
@@ -315,7 +333,7 @@ export function initFeedback(document, window, dependencies = {}) {
       if (token !== generation) return;
       if (result?.ok !== true || result.id !== sent.id) throw new Error('Save not confirmed.');
       saveConfirmed = true;
-      confirmedSubmission = { id: sent.id, text: sent.text };
+      confirmedSubmission = { id: sent.id, text: sent.text, receipt: result };
       if (dependencies.onSaved) {
         phase = 'processing';
         updateControls();

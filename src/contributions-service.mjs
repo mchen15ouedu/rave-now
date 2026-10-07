@@ -101,16 +101,20 @@ export async function processContribution(record,{ai,verifier,catalog,eventVerif
   }
 }
 
-export function createContributionService({env=process.env,store,ai,verifier,catalog,eventVerifier,source,intervalMs=60000,jobTimeoutMs=360000}={}) {
-  store??=createContributionsStore({env});ai??=createContributionAI({env});eventVerifier??=createEventVerifier();
+export function createContributionService({env=process.env,store,ai,verifier,catalog,eventVerifier,source,intervalMs=60000,jobTimeoutMs=360000,batchLimit=Number(env.CONTRIBUTIONS_BATCH_LIMIT||3),autoDrain=env.CONTRIBUTIONS_PROCESSING_MODE!=='batch'}={}) {
   const enabled=env.CONTRIBUTIONS_WORKER_ENABLED==='true';
+  if(!Number.isInteger(batchLimit)||batchLimit<1||batchLimit>50)throw new TypeError('Choose a contribution batch limit from 1 to 50.');
+  store??=createContributionsStore({env});
+  // The browser Space only accepts durable input. Its disabled worker never
+  // constructs a model client; the separate analysis Space owns inference.
+  if(enabled){ai??=createContributionAI({env});eventVerifier??=createEventVerifier();}
   let timer,running,controller,stopped=false;
   const statusCache=new Map();
   async function drain() {
     if(stopped||!enabled||running)return running;
     running=(async()=>{
       try {
-        const pending=await store.pending({limit:3,signal:AbortSignal.timeout(30000)});
+        const pending=await store.pending({limit:batchLimit,signal:AbortSignal.timeout(30000)});
         for(const item of pending) {
           if(stopped)break;
           const owner=randomUUID();
@@ -136,7 +140,7 @@ export function createContributionService({env=process.env,store,ai,verifier,cat
     async submit(input,{signal}={}) {
       const clean=cleanContribution(input),result=await store.submit(clean,{signal});
       if(result?.saved!==true||result.id!==clean.id)throw Error('Unconfirmed save');
-      statusCache.delete(result.id);void drain();return result;
+      statusCache.delete(result.id);if(autoDrain)void drain();return result;
     },
     async status(id,{signal}={}) {
       const cached=statusCache.get(id);if(cached&&cached.until>Date.now())return {...cached.value};
@@ -146,7 +150,7 @@ export function createContributionService({env=process.env,store,ai,verifier,cat
       statusCache.set(id,{until:Date.now()+3000,value});return {...value};
     },
     start(){if(!enabled||timer)return;stopped=false;timer=setInterval(()=>void drain(),Math.max(1000,intervalMs));timer.unref();void drain();},
-    async stop(){stopped=true;clearInterval(timer);timer=null;controller?.abort();ai.close?.();await running;},
+    async stop(){stopped=true;clearInterval(timer);timer=null;controller?.abort();ai?.close?.();await running;},
     drain,
   };
 }

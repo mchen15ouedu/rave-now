@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { createFeedbackHandler } from './feedback.mjs';
 import {createContributionService} from './contributions-service.mjs';
 import {createContributionHandler} from './contributions.mjs';
@@ -10,7 +11,7 @@ import { GoogleLocationProvider, LocationError } from './locations.mjs';
 import { findNearbyShows, findFutureShows } from './shows.mjs';
 import { browserDateWindow, browserRangeLabels } from './browser-ranges.mjs';
 import { groupEventResults } from './event-groups.mjs';
-import { createArtistCatalog } from './artist-catalog.mjs';
+import { createArtistCatalog,cleanArtistName } from './artist-catalog.mjs';
 import { createArtistVerifier } from './artist-verification.mjs';
 import { artistKey, parseSearchQuery, matchingArtistNames, artistMatches, looksLikeLocation, SearchInputError } from './artist-search.mjs';
 
@@ -61,6 +62,21 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
   assets.set('/browser/feedback.js',['feedback.js','text/javascript; charset=utf-8']);
   assets.set('/browser/whisper-client.js',['whisper-client.js','text/javascript; charset=utf-8']);
   const files=new Map();let inFlight=0;
+  const queuedArtists=new Map();
+  async function queueArtist(name,{signal}={}) {
+    const clean=cleanArtistName(name),key=artistKey(clean),now=Date.now();
+    for(const [key,value] of queuedArtists)if(value.until<=now)queuedArtists.delete(key);
+    let item=queuedArtists.get(key);
+    if(!item){if(queuedArtists.size>=120)return {name:clean,added:false,status:'not-saved'};item={id:randomUUID(),until:now+3600000,saved:false};queuedArtists.set(key,item);}
+    if(!item.saved) {
+      try {
+        const receipt=await contributionService.submit({id:item.id,text:`artist: ${clean}`},{signal});
+        if(receipt?.saved!==true||receipt.id!==item.id)throw Error('Unconfirmed save');
+        item.saved=true;
+      }catch{signal?.throwIfAborted();return {name:clean,added:false,status:'not-saved'};}
+    }
+    return {name:clean,added:false,status:'queued',id:item.id};
+  }
   async function optionalCatalog(signal,timeoutMs) {
     if (timeoutMs<=0) return {artists:[],promoters:[],available:false};
     const deadline=AbortSignal.timeout(Math.ceil(timeoutMs));
@@ -154,7 +170,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
           if (!names.available) registration={name:artistQuery,added:false,status:'not-saved'};
           else if (!inCatalog && (exact || partial.length===0)) {
             if (matchingArtistNames(artistQuery,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
-            registration=await registerVerifiedArtist(artistQuery,{signal,startedAt});
+            registration=env.CONTRIBUTIONS_PROCESSING_MODE==='batch'?await queueArtist(artistQuery,{signal}):await registerVerifiedArtist(artistQuery,{signal,startedAt});
           }
         }
       }

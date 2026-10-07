@@ -42,13 +42,13 @@ Browser locations stay in page memory for searches and clear on reload. Browser 
 
 **Missing artist?**, beside the search label, opens one text box for a DJ name and optional show details. Type or use **Record voice**, review the Whisper transcript, and press **Send details**. Include an official event or ticket link when possible. Recordings stay on the device; only the submitted text is saved in a separate private HF Dataset repository.
 
-Submissions are saved before processing and the dialog displays their status. A small pinned [Qwen3 model](https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX) runs on the Space CPU to extract the artist name and whether show information was included. It makes no paid inference calls. Independent music records verify the artist identity before the app reuses or adds the name. The model cannot declare an artist or event verified by itself.
+Submissions are saved before processing. In batch mode, the dialog acknowledges the save promptly and checks its latest status when reopened. A separate input-analysis Space processes the private queue at startup and roughly once an hour. A small pinned [Qwen3 model](https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX) extracts the artist name and whether show information was included. It makes no paid inference calls. Independent music records verify the artist identity before the app reuses or adds the name. The model cannot declare an artist or event verified by itself.
 
 Event additions require matching structured event facts from an official artist/venue source or supported ticket site: artist, upcoming date, venue, and city. Text alone is insufficient. Existing events are ignored or receive verified blank details; populated facts and formulas are preserved. Conflicts, ambiguous identities, incomplete sources, and verification outages remain saved with **Needs review** status. The app handles one artist and one event per submission. Verified updates use the current tracker connection and invalidate the event cache.
 
-For a deployment, configure `CONTRIBUTIONS_HF_REPO` to a private HF Dataset, and `CONTRIBUTIONS_HF_TOKEN` to its read/write token. The existing `FEEDBACK_HF_TOKEN` may be reused when it has that repository access. Enable `CONTRIBUTIONS_WORKER_ENABLED=true` after connecting the writable catalog adapter. Secrets stay on the server. The unconfigured sample app reports that a save was not confirmed. Durable records and processing leases allow queued work to recover after a Space restart; duplicate retries reuse the submission ID and recheck the tracker before writing. The inbox supports up to 2,000 records and 120 confirmed submissions per server hour.
+For a deployment, configure `CONTRIBUTIONS_HF_REPO` to a private HF Dataset, and `CONTRIBUTIONS_HF_TOKEN` to its read/write token. The existing `FEEDBACK_HF_TOKEN` may be reused when it has that repository access. Keep `CONTRIBUTIONS_WORKER_ENABLED=false` on the browser Space and enable it only on the [separate processor](deploy/input-analysis/README.md). Set `CONTRIBUTIONS_PROCESSING_MODE=batch` on the browser. Unknown artist searches are also queued for verification in that mode. Secrets stay on the server. The unconfigured sample app reports that a save was not confirmed. Durable records and processing leases allow queued work to recover after a Space restart; duplicate retries reuse the submission ID and recheck the tracker before writing. The inbox supports up to 2,000 records and 120 confirmed form submissions per server hour.
 
-The first AI task downloads about 618 MB of model weights and can take longer. The worker runs outside the web request; show searches remain available. Model cache uses temporary disk, so a rebuilt Space may download it again. Owners can inspect saved transcripts, evidence URLs, and results in the private HF Dataset; there is no public transcript-list endpoint.
+The first AI task downloads about 618 MB of model weights and can take longer. In the two-Space deployment, only the processor downloads those weights; browsing does not share its CPU. Model cache uses temporary disk, so a rebuilt processor may download it again. Owners can inspect saved transcripts, evidence URLs, and results in the private HF Dataset; there is no public transcript-list endpoint.
 
 ## Voice feedback
 
@@ -66,7 +66,7 @@ An owner can export the text for review with those environment variables set:
 node scripts/export-feedback.mjs > feedback-private.json
 ```
 
-Keep the export private. Ask Codex to analyze the exported complaints, group recurring themes, cite representative feedback, and propose improvements for discussion. Choose changes together before implementation; feedback does not trigger automatic code changes. The inbox is limited to 2,000 records, with at most 120 confirmed submissions per server hour. Archive it privately before reaching that limit.
+Keep the export private. The separate input-analysis Space can prepare summaries, categories, and suggested improvements in a second private HF dataset. Export them with `node scripts/export-input-analysis.mjs`. These are AI suggestions for owner review; check the original complaints, group recurring themes, and choose changes together before implementation. Feedback does not trigger automatic code changes. The inbox is limited to 2,000 records, with at most 120 confirmed submissions per server hour. Archive it privately before reaching that limit.
 
 ## Try the message simulator
 
@@ -131,3 +131,8 @@ npm run check
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the public sample-data boundary and useful areas to improve. Private deployments can supply their own authorized event sources; contributions should use fictitious fixtures and avoid private listings or credentials.
 
 Code is licensed under the [MIT License](LICENSE). The GeoNames city/ZIP directory is separate data licensed under **CC BY 4.0**; its attribution is in [`data/GEONAMES-LICENSE.md`](data/GEONAMES-LICENSE.md).
+
+
+## Separate input analysis
+
+Deploy a dedicated CPU Space using [the processor instructions](deploy/input-analysis/README.md). The browser saves input; the processor verifies artist/show submissions and prepares private feedback summaries in roughly hourly batches. Set `HF_INPUT_ANALYSIS_URL` alongside `HF_SPACE_URL` to let the hourly health workflow check both Spaces with one runner. Timing can be delayed by schedules, cold starts, or pending work.

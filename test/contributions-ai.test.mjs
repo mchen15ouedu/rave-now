@@ -20,6 +20,15 @@ class FakeWorker extends EventEmitter {
 }
 const valid='{"artist":"Autechre","hasEvent":false}';
 
+test('one CPU worker handles feedback summaries and later artist extraction without sharing output schemas',async()=>{
+  const ai=createContributionAI({WorkerImpl:FakeWorker,timeoutMs:1000});
+  try {
+    const first=ai.analyzeFeedback('The page is slow.'),worker=workers.at(-1);assert.equal(worker.messages.at(-1).mode,'feedback');
+    worker.respond('{"summary":"The user reports slow loading.","category":"performance","suggestion":"Review loading time."}');assert.equal((await first).category,'performance');
+    const second=ai.extract('Autechre');assert.equal(workers.at(-1),worker);worker.respond(valid);assert.equal((await second).artist,'Autechre');
+  }finally{ai.close();}
+});
+
 test('explicit calendar dates cannot be discarded by a model without event words',()=>{
   for(const text of ['Autechre Dallas October 9, 2026','Autechre Dallas 9 October 2026','Autechre Dallas 10/9/2026'])assert.equal(parseArtistExtraction(valid,text).hasEvent,true);
 });

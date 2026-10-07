@@ -1,4 +1,4 @@
-name: Hugging Face hourly keepalive
+name: Hugging Face hourly health checks
 
 on:
   schedule:
@@ -14,14 +14,14 @@ concurrency:
 
 jobs:
   ping:
-    # No runner is allocated until the public Space URL has been configured.
-    if: ${{ vars.HF_SPACE_URL != '' }}
+    if: ${{ vars.HF_SPACE_URL != '' || vars.HF_INPUT_ANALYSIS_URL != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - name: Wake Space and verify health
+      - name: Wake configured Spaces and verify health
         env:
           HF_SPACE_URL: ${{ vars.HF_SPACE_URL }}
+          HF_INPUT_ANALYSIS_URL: ${{ vars.HF_INPUT_ANALYSIS_URL }}
         shell: bash
         run: |
           python3 - <<'PY'
@@ -30,51 +30,59 @@ jobs:
           import re
           import sys
           import time
+          from concurrent.futures import ThreadPoolExecutor
           from urllib.error import HTTPError, URLError
           from urllib.parse import urlsplit
           from urllib.request import HTTPRedirectHandler, Request, build_opener
-
-          raw = os.environ['HF_SPACE_URL'].strip()
-          try:
-              url = urlsplit(raw)
-              valid = (url.scheme == 'https'
-                       and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.hf\.space', url.hostname or '')
-                       and url.port in (None, 443)
-                       and not url.username and not url.password
-                       and url.path in ('', '/')
-                       and not url.query and not url.fragment)
-          except ValueError:
-              valid = False
-          if not valid:
-              sys.exit('HF_SPACE_URL must be the public https://your-space.hf.space origin, without a path, query, or credentials.')
 
           class NoRedirects(HTTPRedirectHandler):
               def redirect_request(self, req, fp, code, msg, headers, newurl):
                   return None
 
-          opener = build_opener(NoRedirects())
-          request = Request(f'{raw.rstrip("/")}/healthz', headers={
-              'User-Agent': 'DailyShowFinder-HealthCheck/1.0',
-              'Cache-Control': 'no-cache',
-              'Accept': 'application/json',
-          })
-          deadline = time.monotonic() + 45
-          for attempt in range(1, 5):
-              remaining = deadline - time.monotonic()
-              if remaining <= 0:
-                  break
+          def check(item):
+              label, raw = item
               try:
-                  with opener.open(request, timeout=min(8, remaining)) as response:
-                      data = json.loads(response.read(4096))
-                      if response.status == 200 and isinstance(data, dict) and data.get('ok') is True:
-                          print('Space is awake and the Show Finder health check passed.')
-                          sys.exit(0)
-                      print(f'Attempt {attempt}: health check was not ready.')
-              except HTTPError as error:
-                  print(f'Attempt {attempt}: HTTP {error.code}.')
-              except (URLError, TimeoutError, OSError, ValueError):
-                  print(f'Attempt {attempt}: health check unavailable or invalid.')
-              if attempt < 4 and time.monotonic() + 2 < deadline:
-                  time.sleep(2)
-          sys.exit('Space did not become healthy within the short keepalive budget. Inspect the Space status or rerun manually.')
+                  url = urlsplit(raw)
+                  valid = (url.scheme == 'https'
+                           and re.fullmatch(r'[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.hf\.space', url.hostname or '')
+                           and url.port in (None, 443)
+                           and not url.username and not url.password
+                           and url.path in ('', '/')
+                           and not url.query and not url.fragment)
+              except ValueError:
+                  valid = False
+              if not valid:
+                  print(f'{label}: invalid public Space origin configuration.')
+                  return False
+              opener = build_opener(NoRedirects())
+              request = Request(f'{raw.rstrip("/")}/healthz', headers={
+                  'User-Agent': 'RaveNow-HealthCheck/1.0',
+                  'Cache-Control': 'no-cache', 'Accept': 'application/json',
+              })
+              deadline = time.monotonic() + 45
+              for attempt in range(1, 5):
+                  remaining = deadline - time.monotonic()
+                  if remaining <= 0:
+                      break
+                  try:
+                      with opener.open(request, timeout=min(8, remaining)) as response:
+                          data = json.loads(response.read(4096))
+                          if response.status == 200 and isinstance(data, dict) and data.get('ok') is True:
+                              print(f'{label}: awake and healthy.')
+                              return True
+                  except HTTPError as error:
+                      print(f'{label}: HTTP {error.code}.')
+                  except (URLError, TimeoutError, OSError, ValueError):
+                      print(f'{label}: health check unavailable or invalid.')
+                  if attempt < 4 and time.monotonic() + 2 < deadline:
+                      time.sleep(2)
+              return False
+
+          spaces = [(label, os.environ.get(key, '').strip()) for label, key in
+                    [('Browser', 'HF_SPACE_URL'), ('Input analysis', 'HF_INPUT_ANALYSIS_URL')]
+                    if os.environ.get(key, '').strip()]
+          with ThreadPoolExecutor(max_workers=2) as pool:
+              results = list(pool.map(check, spaces))
+          if not all(results):
+              sys.exit('A Space did not become healthy. Inspect its status or rerun manually.')
           PY

@@ -43,6 +43,12 @@ test('POST acknowledges a reviewed canonical UUID only after durable storage con
   assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(response.headers.get('x-content-type-options'),'nosniff');
 });
 
+test('batch API receipts and status identify deferred processing without exposing the stored text',async t=>{
+  const {post,get}=await server(t,{env:{CONTRIBUTIONS_PROCESSING_MODE:'batch',CONTRIBUTIONS_BATCH_INTERVAL_MINUTES:'60'}});
+  const saved=await (await post()).json();assert.deepEqual(saved,{ok:true,id,status:'queued',processingMode:'batch',batchIntervalMinutes:60});
+  const status=await (await get()).json();assert.equal(status.processingMode,'batch');assert.equal(status.batchIntervalMinutes,60);assert.equal(status.status,'queued');assert.equal(status.text,undefined);
+});
+
 test('POST never acknowledges missing, false or mismatched durable receipts',async t=>{
   for(const receipt of [null,undefined,{}, {id,saved:false},{id,saved:'true'},{id:otherId,saved:true},{id:id.toUpperCase(),saved:true}]) {
     let calls=0;const {post}=await server(t,{service:{submit:async()=>{calls++;return receipt;}}});

@@ -73,6 +73,15 @@ test('feedback is visible near the top and the missing-artist button is directly
   assert.match(html, /\/browser\/contributions\.js/);
 });
 
+test('batch save acknowledges promptly without polling; reopening refreshes the same receipt once',async()=>{
+  const view=page({post:call=>response({ok:true,id:call.body.id,status:'queued',processingMode:'batch',batchIntervalMinutes:60},202),get:call=>response({id:call.url.split('/').at(-1),status:'completed',message:'Artist added.'})});
+  await view.click('open');await view.type('DJ Example.');await view.click('submit');
+  assert.equal(view.calls.length,1);assert.equal(view.timers.size,0);assert.match(view.nodes.get('status').textContent,/saved for the next analysis batch/);assert.equal(view.nodes.get('submit').disabled,false);
+  await view.click('cancel');await view.click('open');await tick();
+  assert.equal(view.calls.length,2);assert.equal(view.calls[1].options.method,'GET');assert.ok(view.calls[1].url.endsWith(view.calls[0].body.id));
+  assert.match(view.nodes.get('status').textContent,/Submission processed.*Artist added/);assert.equal(view.timers.size,0);view.app.destroy();
+});
+
 test('voice contribution stays editable and sends only reviewed text and UUID after explicit Send', async () => {
   const view = page({ voice: true, get: call => response({ id: call.url.split('/').at(-1), status: 'completed', message: 'Artist and show details updated.' }) });
   await view.click('open'); assert.equal(view.voiceCalls.length, 0); assert.equal(view.transcription.length, 0); assert.equal(view.calls.length, 0);

@@ -314,6 +314,16 @@ test('service submit canonicalizes drafts and returns only confirmed durable rec
   await service.stop();
 });
 
+test('batch submission stays queued until an explicit drain and configured batch bounds reach the store',async()=>{
+  const storage=queue(),{calls,dependencies}=processor();let requestedLimit;
+  const pending=storage.store.pending;storage.store.pending=async args=>{requestedLimit=args.limit;return pending(args);};
+  const service=createContributionService({env:{CONTRIBUTIONS_WORKER_ENABLED:'true',CONTRIBUTIONS_PROCESSING_MODE:'batch',CONTRIBUTIONS_BATCH_LIMIT:'20'},store:storage.store,...dependencies});
+  await service.submit({id,text:'Please add Tiësto.'});await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(storage.calls.pending,0);assert.equal(calls.extract.length,0);assert.equal(storage.values.get(id).status,'queued');
+  await service.drain();assert.equal(requestedLimit,20);assert.equal(storage.values.get(id).status,'completed');await service.stop();
+  for(const limit of [0,51,1.5,NaN])assert.throws(()=>createContributionService({env:{},store:storage.store,batchLimit:limit}),TypeError);
+});
+
 test('enabled queue processes persisted records with a fresh claim nonce and owner-matching checkpoint',async()=>{
   const storage=queue([record({text:eventText}),record({id:otherId})]),{calls,dependencies}=processor();let invalidations=0;
   const service=createContributionService({env:{CONTRIBUTIONS_WORKER_ENABLED:'true'},store:storage.store,...dependencies,source:{invalidate:()=>invalidations++}});

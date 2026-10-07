@@ -228,6 +228,7 @@ async function loadShows(input) {
       const hasOrigin = typeof input.location === 'string' || Number.isFinite(input.latitude) && Number.isFinite(input.longitude);
       const scope = data.view === 'full' || !hasOrigin ? `${rangeLabel} · All locations` : `Near ${label} · ${rangeLabel}`;
       const saved = data.artistRegistration?.added ? ` Added “${data.artistRegistration.name}” to Artist List.`
+        : data.artistRegistration?.status === 'queued' ? ` “${data.artistRegistration.name || name}” was saved for the next analysis batch. Verified artists will be added after processing.`
         : data.artistRegistration?.status === 'unverified' ? ` Could not verify “${data.artistRegistration.name || name}” as a music artist; not added.`
         : data.artistRegistration?.status === 'verification-unavailable' ? ' Artist verification is temporarily unavailable; not added.'
         : data.artistRegistration?.status === 'not-saved' ? ' Artist list update could not be confirmed.' : '';

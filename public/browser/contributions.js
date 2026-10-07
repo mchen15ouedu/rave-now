@@ -16,6 +16,7 @@ export function initContributions(document, window, dependencies = {}) {
   const clearTimer = dependencies.clearTimeout ?? window.clearTimeout?.bind(window) ?? globalThis.clearTimeout;
   const AbortControllerImpl = dependencies.AbortController ?? window.AbortController ?? globalThis.AbortController;
   const clock = dependencies.now ?? (() => Date.now());
+  const batchMessage = 'Submission saved for the next analysis batch. Verified updates will appear after processing; check again later.';
 
   function wait(delay, signal) {
     return new Promise((resolve, reject) => {
@@ -63,7 +64,14 @@ export function initContributions(document, window, dependencies = {}) {
     ...dependencies,
     prefix: 'contribution', subject: 'artist details', endpoint: ENDPOINT,
     validateSaved: (result, status) => status === 202 && result?.status === 'queued',
+    async onReopen(result, { signal, status }) {
+      if (result?.processingMode !== 'batch') return;
+      status('Submission saved. Checking its latest status…');
+      const progress = await readStatus(result.id, signal, REQUEST_LIMIT_MS);
+      return terminal.has(progress.status) ? terminalMessage(progress) : batchMessage;
+    },
     async onSaved(result, { signal, status }) {
+      if (result?.processingMode === 'batch') return batchMessage;
       status('Submission saved. Checking processing status; completion is not confirmed yet.');
       const deadline = clock() + POLL_LIMIT_MS;
       while (clock() < deadline) {

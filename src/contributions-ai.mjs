@@ -2,6 +2,7 @@ import {Worker} from 'node:worker_threads';
 import path from 'node:path';
 import {projectDir} from './config.mjs';
 import {cleanArtistName} from './artist-catalog.mjs';
+import {parseFeedbackAnalysis} from './feedback-analysis.mjs';
 
 const key=value=>value.normalize('NFKD').replace(/\p{M}/gu,'').toLocaleLowerCase('en-US').replace(/\s+/gu,' ').trim();
 export function parseArtistExtraction(output,text) {
@@ -21,8 +22,7 @@ export function parseArtistExtraction(output,text) {
 export function createContributionAI({env=process.env,WorkerImpl=Worker,timeoutMs=240000}={}) {
   let worker,active,sequence=0;
   const discard=(target=worker)=>{if(worker===target)worker=null;void target?.terminate();};
-  return {
-    async extract(text,{signal}={}) {
+    async function run(text,{signal}={},mode='artist') {
       signal?.throwIfAborted();
       if(active)throw Error('Artist extraction busy');
       return new Promise((resolve,reject)=>{
@@ -47,15 +47,18 @@ export function createContributionAI({env=process.env,WorkerImpl=Worker,timeoutM
             if(active?.id!==id||data?.id!==id)return;
             jobWorker.off('message',onMessage);
             if(data.error){finish(Error('Unavailable'));return;}
-            try{finish(null,parseArtistExtraction(data.output,text));}catch{finish(Error('Invalid result'));}
+            try{finish(null,mode==='feedback'?parseFeedbackAnalysis(data.output):parseArtistExtraction(data.output,text));}catch{finish(Error('Invalid result'));}
           };
           active={id,cancel,timer:setTimeout(cancel,Math.min(240000,Math.max(1,timeoutMs))),cleanup:()=>{jobWorker.off('message',onMessage);}};
           jobWorker.on('message',onMessage);signal?.addEventListener('abort',cancel,{once:true});
           if(signal?.aborted){cancel();return;}
-          jobWorker.postMessage({id,text});
+          jobWorker.postMessage({id,text,...(mode==='feedback'?{mode}:{})});
         }catch{active??={id};finish(Error('Unavailable'));}
       });
-    },
+    }
+  return {
+    extract:(text,options)=>run(text,options),
+    analyzeFeedback:(text,options)=>run(text,options,'feedback'),
     close(){active?.cancel?.();discard();},
   };
 }
