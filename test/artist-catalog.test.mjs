@@ -419,6 +419,38 @@ test('catalog cache expires at sixty seconds, exposes fresh outages, and reflect
   assert.equal(reads, 2, 'Adding a name must not extend the age of the old catalog');
 });
 
+test('invalidating after an uncertain artist write performs a fresh read without retrying the mutation', async () => {
+  let reads = 0, writes = 0, saved = false;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (_url, options) => {
+    const payload = JSON.parse(options.body);
+    if (payload.action === 'ensureArtist') { writes++; saved = true; throw Error('Lost write response'); }
+    assert.equal(payload.action, 'readCatalog'); reads++;
+    return json({ ok: true, artists: saved ? ['Sample Added'] : [], promoters: [] });
+  } });
+  assert.deepEqual((await catalog.load()).artists, []);
+  await assert.rejects(catalog.ensureArtist('Sample Added'), unavailable);
+  assert.deepEqual((await catalog.load()).artists, [], 'The prior names remain cached until explicitly invalidated');
+  catalog.invalidate();
+  assert.deepEqual((await catalog.load()).artists, ['Sample Added']);
+  assert.equal(reads, 2); assert.equal(writes, 1);
+});
+
+test('invalidating names retires an in-flight read and prevents its old result from repopulating the cache', async () => {
+  const old = deferredCatalog(), started = deferredCatalog(); let reads = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (_url, options) => {
+    assert.equal(JSON.parse(options.body).action, 'readCatalog'); reads++;
+    if (reads === 1) { started.resolve(); return old.promise; }
+    return json({ ok: true, artists: ['Sample Added'], promoters: [] });
+  } });
+  const previous = catalog.load(); await started.promise;
+  catalog.invalidate();
+  assert.deepEqual((await catalog.load()).artists, ['Sample Added']);
+  old.resolve(json({ ok: true, artists: [], promoters: [] }));
+  assert.deepEqual((await previous).artists, []);
+  assert.deepEqual((await catalog.load()).artists, ['Sample Added']);
+  assert.equal(reads, 2);
+});
+
 test('an older catalog response cannot overwrite the catalog refreshed after an artist addition', async () => {
   const old = deferredCatalog(), started = deferredCatalog();
   let reads = 0;

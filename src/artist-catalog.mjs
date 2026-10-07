@@ -215,6 +215,11 @@ export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snap
   }
 
   return {
+    invalidate() {
+      namesVersion++;
+      cachedNames = undefined;
+      read.invalidate('catalog');
+    },
     async load({ signal } = {}) {
       try {
         if (signal?.aborted) throw new CatalogError('CANCELLED', 'The artist request was cancelled.');

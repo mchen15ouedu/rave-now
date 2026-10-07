@@ -32,9 +32,20 @@ export async function processContribution(record,{ai,verifier,catalog,eventVerif
     const exists=names.artists.some(name=>same(name,verification.name));
     if(exists)result.artistStatus='existing';
     else {
-      const receipt=await catalog.ensureArtist(verification.name,{signal});signal?.throwIfAborted();
-      if(!receipt||typeof receipt.added!=='boolean'||!same(receipt.name,verification.name))throw Error('Unconfirmed artist save');
-      result.artistStatus=receipt.added?'added':'existing';
+      try {
+        const receipt=await catalog.ensureArtist(verification.name,{signal});signal?.throwIfAborted();
+        if(!receipt||typeof receipt.added!=='boolean'||!same(receipt.name,verification.name))throw Error('Unconfirmed artist save');
+        result.artistStatus=receipt.added?'added':'existing';
+      }catch(error) {
+        signal?.throwIfAborted();
+        if(error?.name==='AbortError'||error?.code==='CANCELLED')throw error;
+        // A lost write response can follow a successful append. Reconcile
+        // through a fresh read; never repeat the mutation to obtain a receipt.
+        catalog.invalidate();signal?.throwIfAborted();
+        const fresh=await catalog.load({signal});signal?.throwIfAborted();
+        if(!fresh.artists.some(name=>same(name,verification.name)))throw error;
+        result.artistStatus='existing';
+      }
     }
     const artistMessage=result.artistStatus==='added'?`${verification.name} was added to Artist List.`:`${verification.name} is already in Artist List.`;
     if(!extraction.hasEvent)return {status:'completed',result:{...result,message:artistMessage}};

@@ -13,13 +13,14 @@ const eventText=`Please add Tiësto and the show on 2026-10-30: ${ticket}`;
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 
 function processor(options={}) {
-  const calls={extract:[],verify:[],load:0,artists:[],shows:0,events:[],checkpoints:[],changed:0};
+  const calls={extract:[],verify:[],load:0,invalidates:0,artists:[],shows:0,events:[],checkpoints:[],changed:0};
   const names=[...(options.artists||[])];
   const dependencies={
     ai:{extract:async(text,{signal}={})=>{calls.extract.push({text,signal});return options.extraction??{artist,hasEvent:false};}},
     verifier:{verify:async(name,{signal}={})=>{calls.verify.push({name,signal});return options.verification??{status:'verified',name:artist,sourceUrl:musicSource,officialUrls:['https://www.tiesto.com/']};}},
     catalog:{
       load:async()=>{calls.load++;return {artists:[...names]};},
+      invalidate:()=>{calls.invalidates++;},
       ensureArtist:async(name,{signal}={})=>{calls.artists.push({name,signal});if(options.artistError)throw options.artistError;if(Object.hasOwn(options,'artistReceipt'))return options.artistReceipt;const added=!names.includes(name);if(added)names.push(name);return {name,added};},
       readShows:async()=>{calls.shows++;return {rows:options.rows??[headers]};},
       ensureEvent:async(value,{signal}={})=>{calls.events.push({value:structuredClone(value),signal});if(options.eventError)throw options.eventError;return Object.hasOwn(options,'eventReceipt')?options.eventReceipt:{status:'added',row:2,event:value};},
@@ -73,6 +74,58 @@ test('unconfirmed artist receipts and provider exceptions report review honestly
     assert.equal(outcome.status,'needs-review');assert.equal(outcome.result.artistStatus,'unavailable');
     assert.equal(calls.events.length,0);assert.equal(calls.shows,0);assert.equal(calls.artists.length,1);
     assert.doesNotMatch(JSON.stringify(outcome),/hf_sensitive|private-provider/);assert.doesNotMatch(outcome.result.message,/was added/);
+  }
+});
+
+test('lost artist receipts reconcile with one fresh read and never repeat the mutation',async()=>{
+  for(const withEvent of [false,true])for(const invalidReceipt of [false,true]) {
+    const {calls,dependencies}=processor();let persisted=false,invalidated=false;
+    dependencies.catalog.load=async()=>{calls.load++;if(calls.load===2)assert.equal(invalidated,true);return {artists:persisted&&invalidated?['TIESTO']:[]};};
+    dependencies.catalog.invalidate=()=>{calls.invalidates++;invalidated=true;};
+    dependencies.catalog.ensureArtist=async(name,{signal}={})=>{
+      calls.artists.push({name,signal});persisted=true;
+      if(invalidReceipt)return {name,added:'unconfirmed'};
+      throw Error('private-provider response unavailable');
+    };
+    const outcome=await processContribution(record(withEvent?{text:eventText}:{}),dependencies);
+    assert.equal(outcome.status,'completed');assert.equal(outcome.result.artistStatus,'existing');
+    assert.match(outcome.result.message,/already in Artist List/);assert.doesNotMatch(outcome.result.message,/was added to Artist List|private-provider/);
+    assert.equal(calls.artists.length,1);assert.equal(calls.load,2);assert.equal(calls.invalidates,1);
+    assert.equal(calls.events.length,withEvent?1:0);assert.equal(outcome.result.eventStatus,withEvent?'added':'not-requested');
+    assert.deepEqual(calls.checkpoints.map(value=>value.artistStatus),withEvent?['existing']:[]);
+  }
+});
+
+test('missing or unavailable fresh catalog reads retain unconfirmed artist writes for review',async()=>{
+  for(const fresh of [[],['Carl Cox'],null,'unavailable']) {
+    const {calls,dependencies}=processor({artistError:Error('private-provider write unavailable')});
+    dependencies.catalog.load=async()=>{
+      calls.load++;if(calls.load===1)return {artists:[]};assert.equal(calls.invalidates,1);
+      if(fresh==='unavailable')throw Error('private-provider fresh read unavailable');
+      return {artists:fresh};
+    };
+    const outcome=await processContribution(record({text:eventText}),dependencies);
+    assert.equal(outcome.status,'needs-review');assert.equal(outcome.result.artistStatus,'unavailable');
+    assert.equal(calls.artists.length,1);assert.equal(calls.load,2);assert.equal(calls.invalidates,1);
+    assert.equal(calls.events.length,0);assert.equal(calls.shows,0);assert.equal(calls.checkpoints.length,0);
+    assert.doesNotMatch(JSON.stringify(outcome),/private-provider|was added|already in Artist List/);
+  }
+});
+
+test('cancellation during artist reconciliation prevents every later read or event write',async()=>{
+  for(const stage of ['write','invalidate','read']) {
+    const controller=new AbortController(),{calls,dependencies}=processor();dependencies.signal=controller.signal;
+    dependencies.catalog.ensureArtist=async(name,{signal}={})=>{calls.artists.push({name,signal});if(stage==='write')controller.abort();throw Error('write response unavailable');};
+    dependencies.catalog.invalidate=()=>{calls.invalidates++;if(stage==='invalidate')controller.abort();};
+    dependencies.catalog.load=async()=>{calls.load++;if(calls.load===1)return {artists:[]};controller.abort();return {artists:[artist]};};
+    await assert.rejects(processContribution(record({text:eventText}),dependencies),error=>error.name==='AbortError');
+    assert.equal(calls.artists.length,1);assert.equal(calls.invalidates,stage==='write'?0:1);assert.equal(calls.load,stage==='read'?2:1);
+    assert.equal(calls.events.length,0);assert.equal(calls.shows,0);assert.equal(calls.checkpoints.length,0);
+  }
+  for(const error of [new DOMException('cancelled','AbortError'),Object.assign(Error('cancelled'),{code:'CANCELLED'})]) {
+    const {calls,dependencies}=processor({artistError:error});
+    const outcome=await processContribution(record(),dependencies);
+    assert.equal(outcome.status,'needs-review');assert.equal(calls.invalidates,0);assert.equal(calls.load,1);assert.equal(calls.artists.length,1);
   }
 });
 
