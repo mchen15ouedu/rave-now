@@ -14,7 +14,7 @@ export function parseArtistExtraction(output,text) {
   const escaped=needle.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   if(!new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`,'u').test(haystack))throw Error('Artist extraction unavailable');
   // Explicit event language cannot be silently discarded by a model decision.
-  const hasEvent=result.hasEvent||/\b(?:show|event|festival|concert|perform(?:s|ing|ance)?|plays?|tickets?|venue|tonight|weekend|friday|saturday|sunday)\b|\b\d{4}-\d{2}-\d{2}\b|https:\/\//i.test(text);
+  const hasEvent=result.hasEvent||/\b(?:show|event|festival|concert|perform(?:s|ing|ance)?|plays?|tickets?|venue|tonight|weekend|friday|saturday|sunday)\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\/\d{1,2}\/\d{4}\b|\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b|https:\/\//i.test(text);
   return {artist,hasEvent};
 }
 

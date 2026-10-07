@@ -17,8 +17,22 @@ export async function processContribution(record,{ai,verifier,catalog,eventVerif
   let result={message:'Checking the submitted artist.',artistStatus:'pending',eventStatus:'not-requested'};
   const review=message=>({status:'needs-review',result:{...result,message}});
   try {
-    const extracted=await ai.extract(record.text,{signal});signal?.throwIfAborted();
-    const extraction=parseArtistExtraction(JSON.stringify(extracted),record.text);
+    signal?.throwIfAborted();
+    const names=await catalog.load({signal});signal?.throwIfAborted();
+    const known=[...new Map(names.artists.flatMap(name=>{
+      try {const candidate=parseArtistExtraction(JSON.stringify({artist:name,hasEvent:false}),record.text);return [[normalizeArtistName(name),candidate]];}
+      catch{return [];}
+    })).values()];
+    let extraction;
+    try {
+      const extracted=await ai.extract(record.text,{signal});signal?.throwIfAborted();
+      extraction=parseArtistExtraction(JSON.stringify(extracted),record.text);
+    }catch(error) {
+      signal?.throwIfAborted();
+      if(error?.name==='AbortError'||error?.code==='CANCELLED'||known.length!==1)throw error;
+      extraction=known[0];
+    }
+    if(!extraction.artist&&known.length===1)extraction=known[0];
     if(!extraction.artist)return review('The artist name was unclear. Submit one DJ or artist name, with an event link if you have a show to add.');
     result.artistName=extraction.artist;
     const verification=await verifier.verify(extraction.artist,{signal});signal?.throwIfAborted();
@@ -28,7 +42,6 @@ export async function processContribution(record,{ai,verifier,catalog,eventVerif
     }
     result.artistName=verification.name;
     result.sourceUrls=verification.sourceUrl?[verification.sourceUrl]:[];
-    const names=await catalog.load({signal});signal?.throwIfAborted();
     const exists=names.artists.some(name=>same(name,verification.name));
     if(exists)result.artistStatus='existing';
     else {

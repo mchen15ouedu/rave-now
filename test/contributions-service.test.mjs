@@ -47,7 +47,7 @@ test('missing, malformed, or hallucinated extraction never reaches a catalog mut
     dependencies.ai.extract=async()=>extraction;
     const outcome=await processContribution(record(),dependencies);
     assert.equal(outcome.status,'needs-review');assert.notEqual(outcome.result.artistStatus,'added');
-    assert.equal(calls.verify.length,0);assert.equal(calls.load,0);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);
+    assert.equal(calls.verify.length,0);assert.equal(calls.load,1);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);
   }
 });
 
@@ -56,7 +56,52 @@ test('unverified, unavailable or mismatched independent identity stays saved for
     const {calls,dependencies}=processor({verification});dependencies.verifier.verify=async()=>verification;
     const outcome=await processContribution(record(),dependencies);
     assert.equal(outcome.status,'needs-review');assert.notEqual(outcome.result.artistStatus,'added');
-    assert.equal(calls.load,0);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);
+    assert.equal(calls.load,1);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);
+  }
+});
+
+test('one literal known artist recovers invalid AI extraction and still verifies the artist and event',async()=>{
+  for(const extracted of [null,{artist:null,hasEvent:false},{artist,hasEvent:'true'},{artist:'Carl Cox',hasEvent:false},'throw']) {
+    const {calls,dependencies}=processor({artists:['TIESTO']});
+    dependencies.ai.extract=async(text,{signal}={})=>{calls.extract.push({text,signal});if(extracted==='throw')throw Error('private-provider extraction failed');return extracted;};
+    const outcome=await processContribution(record({text:eventText}),dependencies);
+    assert.equal(outcome.status,'completed');assert.equal(outcome.result.artistStatus,'existing');assert.equal(outcome.result.eventStatus,'added');
+    assert.equal(calls.extract.length,1);assert.equal(calls.verify.length,1);assert.equal(calls.verify[0].name,'TIESTO');
+    assert.equal(calls.load,1);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,1);assert.ok(calls.eventVerification);
+    assert.doesNotMatch(JSON.stringify(outcome),/private-provider/);
+  }
+});
+
+test('multiple, unknown or longer-word artist mentions cannot provide a known-name extraction fallback',async()=>{
+  for(const sample of [
+    {artists:[artist,'Carl Cox'],text:'Please check Tiësto and Carl Cox at the show.'},
+    {artists:[artist,artist+' Collective'],text:'Please check Tiësto Collective at the show.'},
+    {artists:[artist],text:'Please check Carl Cox at the show.'},
+    {artists:[artist],text:'Please check Tiëstorian at the show.'},
+  ])for(const extracted of [null,{artist:null,hasEvent:false},'throw']) {
+    const {calls,dependencies}=processor({artists:sample.artists});
+    dependencies.ai.extract=async()=>{if(extracted==='throw')throw Error('extraction unavailable');return extracted;};
+    const outcome=await processContribution(record({text:sample.text}),dependencies);
+    assert.equal(outcome.status,'needs-review');assert.equal(calls.load,1);assert.equal(calls.verify.length,0);
+    assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);assert.equal(calls.shows,0);
+  }
+});
+
+test('known-name extraction fallback never replaces independent artist verification',async()=>{
+  const {calls,dependencies}=processor({artists:[artist],verification:{status:'unverified'}});
+  dependencies.ai.extract=async()=>{throw Error('extraction unavailable');};
+  const outcome=await processContribution(record({text:eventText}),dependencies);
+  assert.equal(outcome.status,'needs-review');assert.equal(outcome.result.artistStatus,'unverified');
+  assert.equal(calls.verify.length,1);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);assert.equal(calls.shows,0);
+});
+
+test('catalog read cancellation or failure prevents AI extraction and subsequent verification or writes',async()=>{
+  for(const failure of ['cancel','unavailable']) {
+    const controller=new AbortController(),{calls,dependencies}=processor({artists:[artist]});dependencies.signal=controller.signal;
+    dependencies.catalog.load=async({signal})=>{calls.load++;assert.equal(signal,controller.signal);if(failure==='cancel'){controller.abort();return {artists:[artist]};}throw Error('private-provider read failed');};
+    if(failure==='cancel')await assert.rejects(processContribution(record(),dependencies),error=>error.name==='AbortError');
+    else assert.equal((await processContribution(record(),dependencies)).status,'needs-review');
+    assert.equal(calls.load,1);assert.equal(calls.extract.length,0);assert.equal(calls.verify.length,0);assert.equal(calls.artists.length,0);assert.equal(calls.events.length,0);
   }
 });
 

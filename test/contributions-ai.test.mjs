@@ -20,6 +20,10 @@ class FakeWorker extends EventEmitter {
 }
 const valid='{"artist":"Autechre","hasEvent":false}';
 
+test('explicit calendar dates cannot be discarded by a model without event words',()=>{
+  for(const text of ['Autechre Dallas October 9, 2026','Autechre Dallas 9 October 2026','Autechre Dallas 10/9/2026'])assert.equal(parseArtistExtraction(valid,text).hasEvent,true);
+});
+
 test('one lazy worker is reused and stale replies do not complete a later job',async()=>{
   const ai=createContributionAI({WorkerImpl:FakeWorker,timeoutMs:1000});
   try{

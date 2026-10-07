@@ -12,7 +12,9 @@ parentPort.on('message',async({id,text})=>{
   try {
     model??=pipeline('text-generation','onnx-community/Qwen3-0.6B-ONNX',{
       device:'cpu',dtype:'q8',revision:'da1453100cf3ff33ef56d17983fc7a8648706db6',
-      session_options:{intra_op_num_threads:2,inter_op_num_threads:1},
+      // ONNX's JavaScript API uses camelCase options. One CPU thread leaves
+      // capacity for the web server on the Space's two-core CPU Basic quota.
+      session_options:{intraOpNumThreads:1,interOpNumThreads:1,executionMode:'sequential'},
     });
     const generator=await model;
     const prompt=generator.tokenizer.apply_chat_template([
