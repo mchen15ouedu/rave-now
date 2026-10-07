@@ -6,14 +6,15 @@
  * then set the same secret and this deployment's /exec URL in the HF Space's
  * Secrets as ARTIST_CATALOG_SECRET and ARTIST_CATALOG_URL. Never put this key in
  * a browser, repository, or URL. Catalog reads return only name columns; show
- * reads return only the eight documented event columns. Event rows are read-only.
+ * reads return only the eight documented event columns. ensureEvent writes only
+ * independently verified event fields and preserves populated tracker facts.
  *
  * Web apps cannot use bound getActiveSpreadsheet(). Fixed openById therefore
  * requires https://www.googleapis.com/auth/spreadsheets. The OAuth permission
  * covers Sheets; this code nevertheless opens only the workbook and tab IDs
  * configured in server-side Script Properties, never request-provided IDs.
  * No Drive, Gmail, external-fetch, or event-collection access is used. readShows
- * reads the current event sheet; it does not research or modify events.
+ * reads the current event sheet; it does not research events.
  */
 
 var CATALOG_MAX_NAME_LENGTH = 120;
@@ -24,16 +25,17 @@ var CATALOG_SHOW_HEADERS = ['Artist', 'Event', 'Location', 'City', 'Address', 'T
 function doPost(e) {
   try {
     var content = e && e.postData && e.postData.contents;
-    if (typeof content !== 'string' || content.length > 4096) return catalogOutput_({ ok: false, code: 'INVALID_REQUEST' });
+    if (typeof content !== 'string' || content.length > 16384) return catalogOutput_({ ok: false, code: 'INVALID_REQUEST' });
     var input = JSON.parse(content);
     var properties = PropertiesService.getScriptProperties();
     var secret = properties.getProperty('ARTIST_CATALOG_SECRET');
     if (!secret || secret.length < 32 || !input || typeof input !== 'object' || Array.isArray(input) || !catalogSecretEquals_(input.secret, secret)) {
       return catalogOutput_({ ok: false, code: 'UNAUTHORIZED' });
     }
-    if (input.action !== 'readCatalog' && input.action !== 'ensureArtist' && input.action !== 'readShows') return catalogOutput_({ ok: false, code: 'INVALID_ACTION' });
+    if (input.action !== 'readCatalog' && input.action !== 'ensureArtist' && input.action !== 'readShows' && input.action !== 'ensureEvent') return catalogOutput_({ ok: false, code: 'INVALID_ACTION' });
     var config = catalogConfiguration_(properties);
     var name = input.action === 'ensureArtist' ? catalogCleanName_(input.name) : null;
+    var event = input.action === 'ensureEvent' ? catalogEventInput_(input.event) : null;
     var workbook = SpreadsheetApp.openById(config.workbookId);
     if (input.action === 'readShows') return catalogOutput_({ ok: true, rows: catalogShowRows_(workbook, config.showSheetId) });
     if (input.action === 'readCatalog') {
@@ -46,6 +48,7 @@ function doPost(e) {
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(10000)) return catalogOutput_({ ok: false, code: 'BUSY' });
     try {
+      if (input.action === 'ensureEvent') return catalogOutput_(catalogEnsureEvent_(workbook, config.showSheetId, event));
       var artistSheet = catalogSheet_(workbook, config.artistSheetId, 'Artist List');
       var promoterSheet = catalogSheet_(workbook, config.promoterSheetId, 'Promoter List');
       var artists = catalogNames_(artistSheet);
@@ -125,6 +128,135 @@ function catalogShowRows_(workbook, showSheetId) {
     rows.push(indexes.map(function (index) { return values[row][index]; }));
   }
   return rows;
+}
+
+function catalogEventError_(code) { var error = new Error('Event write rejected'); error.catalogCode = code; throw error; }
+
+function catalogEventText_(value, maximum, required) {
+  if (typeof value !== 'string' || /[\p{Cc}\p{Cf}]/u.test(value)) catalogEventError_('INVALID_EVENT');
+  var clean = value.normalize('NFC').trim().replace(/\s+/gu, ' ');
+  if (clean.length > maximum || required && !clean) catalogEventError_('INVALID_EVENT');
+  return clean;
+}
+
+function catalogEventUrl_(value, required, youtube) {
+  var clean = catalogEventText_(value, 2048, required);
+  if (!clean) return '';
+  // Apps Script has no browser URL global. Accept only an ordinary public
+  // HTTPS hostname, no credentials/custom ports or whitespace-bearing URLs.
+  var match = clean.match(/^https:\/\/((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63})(?::443)?(?:[/?#][^\s<>"\\]*)?$/i);
+  if (!match || youtube && ['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].indexOf(match[1].toLowerCase()) < 0) catalogEventError_('INVALID_EVENT');
+  return clean;
+}
+
+function catalogEventDate_(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  var parts = value.split('-').map(Number), date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  return parts[0] >= 2000 && parts[0] <= 2100 && date.toISOString().slice(0, 10) === value ? value : null;
+}
+
+function catalogEventInput_(value) {
+  var fields = ['artist', 'event', 'venue', 'city', 'address', 'date', 'ticketUrl', 'youtubeUrl', 'sourceUrl'];
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(function (key) { return fields.indexOf(key) < 0; })) catalogEventError_('INVALID_EVENT');
+  var result = {
+    artist: catalogEventText_(value.artist, 120, true),
+    event: catalogEventText_(value.event == null ? '' : value.event, 240, false),
+    venue: catalogEventText_(value.venue == null ? '' : value.venue, 240, false),
+    city: catalogEventText_(value.city, 160, true),
+    address: catalogEventText_(value.address == null ? '' : value.address, 500, false),
+    date: catalogEventText_(value.date, 10, true),
+    ticketUrl: catalogEventUrl_(value.ticketUrl == null ? '' : value.ticketUrl, false, false),
+    youtubeUrl: catalogEventUrl_(value.youtubeUrl == null ? '' : value.youtubeUrl, false, true),
+    sourceUrl: catalogEventUrl_(value.sourceUrl, true, false)
+  };
+  if ((!result.event && !result.venue) || !catalogEventDate_(result.date)) catalogEventError_('INVALID_EVENT');
+  return result;
+}
+
+function catalogEventKey_(value) { return String(value == null ? '' : value).normalize('NFKD').replace(/\p{M}/gu, '').trim().replace(/\s+/gu, ' ').toLocaleLowerCase('en-US'); }
+function catalogEventCityKey_(value) { return catalogEventKey_(value); }
+function catalogEventLinkKey_(value) { return String(value || '').trim().replace(/#.*$/, '').replace(/^https:\/\/([^/]+)/i, function (all, host) { return 'https://' + host.toLowerCase().replace(/:443$/, ''); }); }
+
+function catalogExistingEventDate_(raw, display, zone) {
+  if (Object.prototype.toString.call(raw) === '[object Date]' && !isNaN(raw.getTime())) return catalogEventDate_(Utilities.formatDate(raw, zone, 'yyyy-MM-dd'));
+  var value = String(display || raw || '').trim(), direct = catalogEventDate_(value);
+  if (direct) return direct;
+  var numeric = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (numeric) return catalogEventDate_(numeric[3] + '-' + ('0' + numeric[1]).slice(-2) + '-' + ('0' + numeric[2]).slice(-2));
+  value = value.replace(/^(?:Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?),?\s+/i, '');
+  var named = value.match(/^([a-z]+)\s+(\d{1,2}),?\s+(\d{4})(?:\s+\d{1,2}:\d{2}(?:\s*[ap]m)?)?$/i);
+  if (!named) return null;
+  var month = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(named[1].slice(0, 3).toLowerCase()) + 1;
+  return month ? catalogEventDate_(named[3] + '-' + ('0' + month).slice(-2) + '-' + ('0' + named[2]).slice(-2)) : null;
+}
+
+function catalogEnsureEvent_(workbook, sheetId, event) {
+  var sheet = workbook.getSheetById(sheetId);
+  if (!sheet || sheet.getName() !== 'Upcoming Shows') catalogEventError_('INVALID_STRUCTURE');
+  var height = sheet.getLastRow(), width = sheet.getLastColumn();
+  if (height < 1 || width < 1) catalogEventError_('INVALID_STRUCTURE');
+  if (height - 1 > CATALOG_MAX_SHOW_ROWS || width > CATALOG_MAX_SHOW_COLUMNS) catalogEventError_('LIMIT_EXCEEDED');
+  var range = sheet.getRange(1, 1, height, width), display = range.getDisplayValues(), raw = range.getValues(), formulas = range.getFormulas();
+  var headers = display[0].map(function (value) { return value.trim().toLowerCase().replace(/[^a-z0-9]/g, ''); });
+  var indexes = CATALOG_SHOW_HEADERS.map(function (header) {
+    var key = header.trim().toLowerCase().replace(/[^a-z0-9]/g, ''), index = headers.indexOf(key);
+    if (index < 0 || headers.lastIndexOf(key) !== index) catalogEventError_('INVALID_STRUCTURE');
+    return index;
+  });
+  var sources = headers.map(function (key, index) { return key === 'sourceurl' || key === 'sourcelink' ? index : -1; }).filter(function (index) { return index >= 0; });
+  if (sources.length > 1) catalogEventError_('INVALID_STRUCTURE');
+  var sourceIndex = sources.length ? sources[0] : -1, zone = workbook.getSpreadsheetTimeZone();
+  var key = catalogEventKey_(event.artist), cityKey = catalogEventCityKey_(event.city), candidates = [];
+  for (var row = 1; row < height; row++) {
+    if (catalogEventKey_(display[row][indexes[0]]) !== key) continue;
+    var date = catalogExistingEventDate_(raw[row][indexes[6]], display[row][indexes[6]], zone);
+    if (date && date !== event.date) continue;
+    var oldCity = catalogEventCityKey_(display[row][indexes[3]]);
+    var linkMatch = Boolean(event.ticketUrl && catalogEventLinkKey_(display[row][indexes[5]]) === catalogEventLinkKey_(event.ticketUrl) || sourceIndex >= 0 && catalogEventLinkKey_(display[row][sourceIndex]) === catalogEventLinkKey_(event.sourceUrl));
+    var sameCityName = catalogEventKey_(oldCity.split(',')[0]) === catalogEventKey_(cityKey.split(',')[0]);
+    if (oldCity && oldCity !== cityKey && !linkMatch && !sameCityName) continue;
+    candidates.push({ row: row, date: date, city: oldCity, linked: linkMatch });
+  }
+  var targetRow = candidates.length ? candidates[0].row + 1 : height + 1;
+  var receipt = function (status) { return { ok: true, status: status, row: targetRow, event: event }; };
+  if (candidates.length > 1) return receipt('conflict');
+  var merging = candidates.length === 1;
+  if (merging) {
+    var candidate = candidates[0], existing = display[candidate.row];
+    var oldVenue = catalogEventKey_(existing[indexes[2]]), oldEvent = catalogEventKey_(existing[indexes[1]]);
+    var newVenue = catalogEventKey_(event.venue), newEvent = catalogEventKey_(event.event);
+    var compatible = !(oldVenue && newVenue && oldVenue !== newVenue) && !(oldEvent && newEvent && oldEvent !== newEvent);
+    var samePlaceOrEvent = Boolean(oldVenue && oldVenue === newVenue || oldEvent && oldEvent === newEvent);
+    if (candidate.date !== event.date || candidate.city && candidate.city !== cityKey || !candidate.linked && (!compatible || !samePlaceOrEvent)) return receipt('conflict');
+  } else if (height - 1 >= CATALOG_MAX_SHOW_ROWS) catalogEventError_('LIMIT_EXCEEDED');
+  var keys = ['artist', 'event', 'venue', 'city', 'address', 'ticketUrl', 'date', 'youtubeUrl'];
+  var plan = [];
+  for (var i = 0; i < keys.length; i++) {
+    if (merging && (keys[i] === 'artist' || keys[i] === 'date')) continue;
+    var value = event[keys[i]], column = indexes[i];
+    if (!value || merging && (raw[targetRow - 1][column] !== '' || formulas[targetRow - 1][column] || display[targetRow - 1][column].trim())) continue;
+    plan.push({ column: column + 1, value: value });
+  }
+  if (sourceIndex >= 0 && (!merging || raw[targetRow - 1][sourceIndex] === '' && !formulas[targetRow - 1][sourceIndex] && !display[targetRow - 1][sourceIndex].trim())) plan.push({ column: sourceIndex + 1, value: event.sourceUrl });
+  if (!plan.length) return receipt('exists');
+  var growing = targetRow > sheet.getMaxRows();
+  // Complex native validation is not guessed or removed. Any constrained,
+  // merged, protected or formula-bearing target blocks this operation.
+  for (var p = 0; p < plan.length; p++) {
+    var cell = sheet.getRange(growing ? height : targetRow, plan[p].column);
+    if (cell.isPartOfMerge() || !cell.canEdit() || cell.getDataValidation() || !growing && (cell.getFormula() || cell.getValue() !== '')) return receipt('conflict');
+  }
+  if (growing) {
+    sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+    sheet.getRange(height, 1, 1, width).copyFormatToRange(sheet, 1, width, targetRow, targetRow);
+  }
+  for (var write = 0; write < plan.length; write++) {
+    var target = sheet.getRange(targetRow, plan[write].column);
+    var rich = SpreadsheetApp.newRichTextValue().setText(plan[write].value).setTextStyle(target.getTextStyle()).build();
+    target.setRichTextValue(rich);
+  }
+  SpreadsheetApp.flush();
+  return receipt(merging ? 'merged' : 'added');
 }
 
 function catalogCleanName_(name) {

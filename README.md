@@ -38,6 +38,18 @@ These are saved links only. The app does not sign into providers, verify account
 
 Browser locations stay in page memory for searches and clear on reload. Browser searches do not register a phone number, open the messaging database, or enable reminders. Music-profile URLs remain on the current device unless you clear them.
 
+## Missing artists and shows
+
+**Missing artist?**, beside the search label, opens one text box for a DJ name and optional show details. Type or use **Record voice**, review the Whisper transcript, and press **Send details**. Include an official event or ticket link when possible. Recordings stay on the device; only the submitted text is saved in a separate private HF Dataset repository.
+
+Submissions are saved before processing and the dialog displays their status. A small pinned [Qwen3 model](https://huggingface.co/onnx-community/Qwen3-0.6B-ONNX) runs on the Space CPU to extract the artist name and whether show information was included. It makes no paid inference calls. Independent music records verify the artist identity before the app reuses or adds the name. The model cannot declare an artist or event verified by itself.
+
+Event additions require matching structured event facts from an official artist/venue source or supported ticket site: artist, upcoming date, venue, and city. Text alone is insufficient. Existing events are ignored or receive verified blank details; populated facts and formulas are preserved. Conflicts, ambiguous identities, incomplete sources, and verification outages remain saved with **Needs review** status. The app handles one artist and one event per submission. Verified updates use the current tracker connection and invalidate the event cache.
+
+For a deployment, configure `CONTRIBUTIONS_HF_REPO` to a private HF Dataset, and `CONTRIBUTIONS_HF_TOKEN` to its read/write token. The existing `FEEDBACK_HF_TOKEN` may be reused when it has that repository access. Enable `CONTRIBUTIONS_WORKER_ENABLED=true` after connecting the writable catalog adapter. Secrets stay on the server. The unconfigured sample app reports that a save was not confirmed. Durable records and processing leases allow queued work to recover after a Space restart; duplicate retries reuse the submission ID and recheck the tracker before writing. The inbox supports up to 2,000 records and 120 confirmed submissions per server hour.
+
+The first AI task downloads about 618 MB of model weights and can take longer. The worker runs outside the web request; show searches remain available. Model cache uses temporary disk, so a rebuilt Space may download it again. Owners can inspect saved transcripts, evidence URLs, and results in the private HF Dataset; there is no public transcript-list endpoint.
+
 ## Voice feedback
 
 **Give feedback** opens a small form. Tap **Record voice**, speak for up to 60 seconds, then tap **Stop**. Whisper transcribes the recording on your device. Review or edit the text, then press **Send feedback**. Typing works too. Opening the form does not request microphone access or download the model; recording and transcription begin only when requested.

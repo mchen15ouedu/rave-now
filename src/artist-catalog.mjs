@@ -9,6 +9,7 @@ const MAX_SHOW_ROWS = 10_000;
 const MAX_SHOW_COLUMNS = 100;
 const SHOW_HEADERS = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)'];
 const headerKey = value => value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+const EVENT_FIELDS = ['artist', 'event', 'venue', 'city', 'address', 'date', 'ticketUrl', 'youtubeUrl', 'sourceUrl'];
 
 export class CatalogError extends Error {
   constructor(code, message) {
@@ -77,6 +78,33 @@ export function cleanArtistName(name) {
 
 export function normalizeArtistName(name) {
   return cleanArtistName(name).normalize('NFKD').replace(/\p{M}/gu, '').toLocaleLowerCase('en-US');
+}
+
+function eventInput(value) {
+  const invalid = () => new CatalogError('INVALID_EVENT', 'Provide a verified event with its artist, date, city, venue or event name, and HTTPS source.');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !EVENT_FIELDS.includes(key))) throw invalid();
+  const text = (key, maximum, required = false) => {
+    const raw = value[key] ?? '';
+    if (typeof raw !== 'string' || /[\p{Cc}\p{Cf}]/u.test(raw)) throw invalid();
+    const clean = raw.normalize('NFC').trim().replace(/\s+/gu, ' ');
+    if (clean.length > maximum || (required && !clean)) throw invalid();
+    return clean;
+  };
+  const url = (key, required = false) => {
+    const raw = text(key, 2048, required);
+    if (!raw) return '';
+    let parsed;
+    try { parsed = new URL(raw); } catch { throw invalid(); }
+    if (parsed.protocol !== 'https:' || parsed.port || parsed.username || parsed.password ||
+        !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(parsed.hostname) ||
+        /[<>"\\]/.test(parsed.href) || (key === 'youtubeUrl' && !['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtu.be'].includes(parsed.hostname))) throw invalid();
+    return parsed.href;
+  };
+  const result = { artist: text('artist', 120, true), event: text('event', 240), venue: text('venue', 240), city: text('city', 160, true), address: text('address', 500), date: text('date', 10, true), ticketUrl: url('ticketUrl'), youtubeUrl: url('youtubeUrl'), sourceUrl: url('sourceUrl', true) };
+  if ((!result.event && !result.venue) || !/^\d{4}-\d{2}-\d{2}$/.test(result.date)) throw invalid();
+  const [year, month, day] = result.date.split('-').map(Number), actual = new Date(Date.UTC(year, month - 1, day));
+  if (year < 2000 || year > 2100 || actual.toISOString().slice(0, 10) !== result.date) throw invalid();
+  return result;
 }
 
 function catalogNames(values) {
@@ -156,7 +184,7 @@ export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snap
   let cachedNames, namesVersion = 0;
   const currentTime = () => Number(clock());
 
-  async function request(action, name, { signal } = {}) {
+  async function request(action, argument, { signal } = {}) {
     if (!env.ARTIST_CATALOG_URL || typeof env.ARTIST_CATALOG_SECRET !== 'string' || env.ARTIST_CATALOG_SECRET.length < 32 || env.ARTIST_CATALOG_SECRET.length > 512) {
       throw new CatalogError('INVALID_CONFIGURATION', 'The artist connection needs configuration.');
     }
@@ -167,7 +195,7 @@ export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snap
     try {
       let response = await fetchImpl(url, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ secret: env.ARTIST_CATALOG_SECRET, action, ...(name === undefined ? {} : { name }) }),
+        body: JSON.stringify({ secret: env.ARTIST_CATALOG_SECRET, action, ...(action === 'ensureArtist' ? { name: argument } : action === 'ensureEvent' ? { event: argument } : {}) }),
         redirect: 'manual', signal: requestSignal,
       });
       // ContentService redirects its output to Google. Follow with a fresh GET,
@@ -220,6 +248,19 @@ export function createArtistCatalog({ env = process.env, fetchImpl = fetch, snap
         if (!cachedNames.value.artists.some(artist => normalizeArtistName(artist) === normalizeArtistName(saved))) cachedNames.value.artists.push(saved);
       } else cachedNames = undefined;
       return { name: saved, added: result.added };
+    },
+    async ensureEvent(event, { signal } = {}) {
+      if (signal?.aborted) throw new CatalogError('CANCELLED', 'The event request was cancelled.');
+      const clean = eventInput(event);
+      if (!configured) throw new CatalogError('NOT_CONFIGURED', 'Adding events is not connected yet.');
+      // Writes are one attempt. A caller can replay this identity after an
+      // uncertain response; the bridge deduplicates under its writer lock.
+      const result = await request('ensureEvent', clean, { signal });
+      let receipt;
+      try { receipt = eventInput(result.event); } catch { throw unavailable(); }
+      if (!['added', 'merged', 'exists', 'conflict'].includes(result.status) || !Number.isInteger(result.row) || result.row < 2 || result.row > MAX_SHOW_ROWS + 1 || EVENT_FIELDS.some(key => receipt[key] !== clean[key])) throw unavailable();
+      if (result.status === 'added' || result.status === 'merged') read.invalidate('shows');
+      return { status: result.status, row: result.row, event: receipt };
     },
     async readShows({ signal } = {}) {
       if (signal?.aborted) throw new CatalogError('CANCELLED', 'The show request was cancelled.');

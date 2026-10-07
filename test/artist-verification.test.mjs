@@ -43,7 +43,7 @@ test('verification requires an exact normalized canonical name plus real music c
     assert.equal(request.headers.Authorization, undefined);
   }
   assert.equal(calls[0].url.searchParams.get('limit'), '100');
-  assert.equal(calls[1].url.searchParams.get('inc'), 'recordings+releases+release-groups');
+  assert.equal(calls[1].url.searchParams.get('inc'), 'recordings+releases+release-groups+url-rels');
 });
 
 test('literal names escape Lucene operators separately from safe URL encoding', async () => {
@@ -220,4 +220,43 @@ test('default production scheduling is shared across separate verifier instances
   ]);
   assert.equal(starts.length, 2);
   assert.ok(starts[1] - starts[0] >= 990);
+});
+
+const homepage = (resource, overrides = {}) => ({
+  type: 'official homepage', 'type-id': 'fe33d22f-c3b0-4d68-bd53-a856badf2b15', 'target-type': 'url',
+  direction: 'forward', ended: false, url: { resource }, ...overrides,
+});
+
+test('verified artists may expose up to five distinct official public HTTPS homepages in the existing lookup', async () => {
+  const relations = [homepage('https://artist.example.com/#home'), homepage('https://artist.example.com/')];
+  for (let index = 1; index < 8; index++) relations.push(homepage(`https://artist${index}.example.com/`));
+  const { verifier, calls } = mockVerifier({ lookup: details({ relations }) });
+  const result = await verifier.verify('Sample Neon');
+  assert.deepEqual(result.officialUrls, ['https://artist.example.com/', ...[1,2,3,4].map(index => `https://artist${index}.example.com/`)]);
+  assert.equal(calls.length, 2, 'URL evidence uses the same artist lookup, without extra requests');
+  result.officialUrls.push('https://caller-mutated.example.com/');
+  const cached = await verifier.verify('Sample Néon');
+  assert.equal(cached.officialUrls.length, 5); assert.equal(calls.length, 2);
+});
+
+test('fan pages, ended relationships and unsafe homepage URLs are omitted without changing music verification', async () => {
+  const relations = [
+    homepage('https://fan.example.com/', { type: 'fanpage' }),
+    homepage('https://ended.example.com/', { ended: true }),
+    homepage('https://wrong-type.example.com/', { 'type-id': secondId }),
+    homepage('https://reversed.example.com/', { direction: 'backward' }),
+    homepage('https://not-url.example.com/', { 'target-type': 'artist' }),
+    ...['http://artist.example.com/', 'https://user:password@artist.example.com/', 'https://artist.example.com/?access_token=private',
+      'https://artist.example.com/?page=events', 'https://127.0.0.1/', 'https://[::1]/', 'https://2130706433/',
+      'https://localhost/', 'https://music.local/', 'https://host.internal/', 'https://artist.example.com:444/',
+      'https://artist.example.com/\nprivate', 'javascript:alert(1)'].map(url => homepage(url)),
+  ];
+  const { verifier } = mockVerifier({ lookup: details({ relations }) });
+  assert.deepEqual(await verifier.verify('Sample Neon'), { status: 'verified', name: 'Sample Néon', source: 'MusicBrainz', sourceUrl: `https://musicbrainz.org/artist/${firstId}` });
+});
+
+test('official URL metadata alone never promotes an unverified artist', async () => {
+  const { verifier } = mockVerifier({ lookup: details({ 'release-groups': [], relations: [homepage('https://artist.example.com/')] }) });
+  const result = await verifier.verify('Sample Neon');
+  assert.equal(result.status, 'unverified'); assert.equal(result.officialUrls, undefined);
 });

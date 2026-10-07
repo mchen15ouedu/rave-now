@@ -44,8 +44,11 @@ function monoAt16k(chunks, length, sampleRate) {
 
 /** Wire the feedback dialog without requesting microphone access or loading Whisper. */
 export function initFeedback(document, window, dependencies = {}) {
+  const prefix = dependencies.prefix ?? 'feedback';
+  const subject = dependencies.subject ?? 'feedback';
+  const endpoint = dependencies.endpoint ?? '/api/browser/feedback';
   const ids = ['open', 'dialog', 'record', 'stop', 'text', 'status', 'submit', 'cancel'];
-  const nodes = Object.fromEntries(ids.map((name) => [name, document.getElementById(`feedback-${name}`)]));
+  const nodes = Object.fromEntries(ids.map((name) => [name, document.getElementById(`${prefix}-${name}`)]));
   if (ids.some((name) => !nodes[name])) return { destroy() {} };
 
   const mediaDevices = dependencies.mediaDevices ?? window.navigator?.mediaDevices;
@@ -73,10 +76,11 @@ export function initFeedback(document, window, dependencies = {}) {
   let capture = null;
   let controller = null;
   let submission = null;
+  let confirmedSubmission = null;
   let destroyed = false;
 
-  function status(message, error = false) {
-    nodes.status.textContent = message;
+  function status(message, error = false, translate = true) {
+    nodes.status.textContent = translate ? message.replace(/\bFeedback\b/g, subject[0].toUpperCase() + subject.slice(1)).replace(/\bfeedback\b/g, subject) : message;
     nodes.status.classList?.toggle('error', error);
   }
 
@@ -88,7 +92,8 @@ export function initFeedback(document, window, dependencies = {}) {
     nodes.text.disabled = busy;
     const text = nodes.text.value.trim();
     nodes.submit.disabled = busy || !text || text.length > FEEDBACK_LIMIT;
-    nodes.dialog.setAttribute('aria-busy', String(busy));
+    // Live recording and processing updates must be announced immediately.
+    nodes.dialog.setAttribute('aria-busy', 'false');
   }
 
   function lengthError(text = nodes.text.value.trim()) {
@@ -122,7 +127,9 @@ export function initFeedback(document, window, dependencies = {}) {
     releaseCapture();
     phase = 'idle';
     if (previous === 'sending') {
-      status('Save not confirmed. Your draft is kept; send it again to confirm whether it was saved.');
+      status(confirmedSubmission?.id === submission?.id && confirmedSubmission ? 'Submission saved. Status checks paused. Your draft is kept; send it again to check progress.' : 'Save not confirmed. Your draft is kept; send it again to confirm whether it was saved.');
+    } else if (previous === 'processing') {
+      status('Submission saved. Status checks paused. Your draft is kept; send it again to check progress.');
     } else if (previous !== 'idle') {
       status('Canceled. Your draft is kept.');
     }
@@ -197,6 +204,7 @@ export function initFeedback(document, window, dependencies = {}) {
       if (typeof result !== 'string' || !result.trim()) throw new Error('No speech was recognized. Type your feedback or record again.');
       nodes.text.value = [nodes.text.value.trim(), result.trim()].filter(Boolean).join('\n');
       submission = null;
+      confirmedSubmission = null;
       if (!lengthError()) status('Review and edit the text, then send your feedback.');
     } catch (error) {
       if (token === generation) status(error?.name === 'TimeoutError' ? error.message :
@@ -286,11 +294,13 @@ export function initFeedback(document, window, dependencies = {}) {
     phase = 'sending';
     status('Saving your feedback…');
     updateControls();
+    let saveConfirmed = false;
     try {
       if (!submission || submission.text !== text) submission = { id: createId(), text };
+      saveConfirmed = confirmedSubmission?.id === submission.id && confirmedSubmission?.text === text;
       const sent = submission;
       const result = await bounded(async () => {
-        const response = await fetch('/api/browser/feedback', {
+        const response = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
@@ -298,15 +308,31 @@ export function initFeedback(document, window, dependencies = {}) {
           body: JSON.stringify(sent),
         });
         if (!response.ok) throw new Error('Save not confirmed.');
-        return response.json();
+        const data = await response.json();
+        if (dependencies.validateSaved && !dependencies.validateSaved(data, response.status)) throw new Error('Save not confirmed.');
+        return data;
       }, SAVE_LIMIT_MS, abortController, 'Save timed out.');
       if (token !== generation) return;
       if (result?.ok !== true || result.id !== sent.id) throw new Error('Save not confirmed.');
-      nodes.text.value = '';
-      submission = null;
-      status('Feedback saved. Thank you.');
+      saveConfirmed = true;
+      confirmedSubmission = { id: sent.id, text: sent.text };
+      if (dependencies.onSaved) {
+        phase = 'processing';
+        updateControls();
+        const message = await dependencies.onSaved(result, {
+          signal: abortController.signal,
+          status(message, error = false) { if (token === generation) status(message, error, false); },
+        });
+        if (token !== generation) return;
+        if (typeof message === 'string') status(message, false, false);
+      } else {
+        nodes.text.value = '';
+        submission = null;
+        confirmedSubmission = null;
+        status('Feedback saved. Thank you.');
+      }
     } catch {
-      if (token === generation) status('Save not confirmed. Your draft is kept; send it again to confirm whether it was saved.', true);
+      if (token === generation) status(saveConfirmed ? 'Submission saved. Progress could not be checked. Your draft is kept; send it again to check progress.' : 'Save not confirmed. Your draft is kept; send it again to confirm whether it was saved.', true);
     } finally {
       if (token === generation) {
         controller = null;
@@ -329,6 +355,7 @@ export function initFeedback(document, window, dependencies = {}) {
   listen(nodes.dialog, 'close', cancelWork);
   listen(nodes.text, 'input', () => {
     if (submission) submission = null;
+    confirmedSubmission = null;
     if (phase === 'idle' && !lengthError()) status('Review your text, then send your feedback.');
     updateControls();
   });

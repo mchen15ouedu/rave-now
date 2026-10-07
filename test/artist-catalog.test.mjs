@@ -194,7 +194,7 @@ test('readShows retains the 2 MiB response cap for event data', async () => {
   await assert.rejects(catalog.readShows(), unavailable);
 });
 
-async function bridgeFixture({ artistNames = ['Tiësto'], promoterNames = ['Insomniac'], header = 'Name', busy = false, showRows = [showHeaders, showRow], showName = 'Upcoming Shows', showLastRow, showLastColumn, catalogsPresent = true, scriptProperties = {} } = {}) {
+async function bridgeFixture({ artistNames = ['Tiësto'], promoterNames = ['Insomniac'], header = 'Name', busy = false, showRows = [showHeaders, showRow], showName = 'Upcoming Shows', showLastRow, showLastColumn, showFormulas = [], showValidations = {}, showProtectedCells = [], showMergedCells = [], showMaxRows = 10000, showRawValues = [], catalogsPresent = true, scriptProperties = {} } = {}) {
   const script = await readFile(new URL('../deploy/google/artist-catalog-bridge.gs', import.meta.url), 'utf8');
   const writes = [], formats = [], opens = [], sheetIds = [], showRanges = [], log = [];
   function sheet(id, name, names) {
@@ -220,13 +220,33 @@ async function bridgeFixture({ artistNames = ['Tiësto'], promoterNames = ['Inso
     };
   }
   const artist = sheet(10, 'Artist List', artistNames), promoter = sheet(20, 'Promoter List', promoterNames);
+  showRows = showRows.map(values => [...values]);
   const upcoming = {
-    getName() { return showName; },
+    maxRows: showMaxRows,
+    getSheetId() { return 30; }, getName() { return showName; },
+    getMaxRows() { return this.maxRows; }, insertRowsAfter(after, count) { this.maxRows += count; },
     getLastRow() { return showLastRow ?? showRows.length; },
     getLastColumn() { return showLastColumn ?? showRows[0]?.length ?? 0; },
-    getRange(row, column, count, width) {
+    getRange(row, column, count = 1, width = 1) {
       showRanges.push({ row, column, count, width });
-      return { getDisplayValues: () => showRows.slice(row - 1, row - 1 + count).map(values => values.slice(column - 1, column - 1 + width)) };
+      const at = (r,c) => showRows[r-1]?.[c-1] ?? '';
+      const values = raw => Array.from({length:count}, (_,offset) => Array.from({length:width}, (_,across) => raw ? showRawValues[row+offset-1]?.[column+across-1] ?? at(row+offset,column+across) : String(at(row+offset,column+across))));
+      return {
+        getDisplayValues: () => values(false), getValues: () => values(true),
+        getFormulas: () => Array.from({length:count}, (_,offset) => Array.from({length:width}, (_,across) => showFormulas[row+offset-1]?.[column+across-1] ?? '')),
+        getValue: () => showRawValues[row-1]?.[column-1] ?? at(row,column),
+        getFormula: () => showFormulas[row-1]?.[column-1] ?? '',
+        getDataValidation: () => showValidations[`${row}:${column}`] ?? null,
+        canEdit: () => !showProtectedCells.includes(`${row}:${column}`),
+        isPartOfMerge: () => showMergedCells.includes(`${row}:${column}`),
+        getTextStyle: () => ({retained:true}),
+        copyFormatToRange(target,c1,c2,r1,r2) {formats.push({target:target.getSheetId(),c1,c2,r1,r2});},
+        setRichTextValue(value) {
+          while(showRows.length<row) showRows.push(Array(showRows[0].length).fill(''));
+          log.push('write');writes.push({id:30,row,column,text:value.text,style:value.style});
+          showRows[row-1][column-1]=value.text;
+        },
+      };
     },
   };
   const properties = { ARTIST_CATALOG_SECRET: env.ARTIST_CATALOG_SECRET, CATALOG_WORKBOOK_ID: 'example-workbook', CATALOG_ARTIST_SHEET_ID: '10', CATALOG_PROMOTER_SHEET_ID: '20', CATALOG_SHOW_SHEET_ID: '30', ...scriptProperties };
@@ -234,23 +254,24 @@ async function bridgeFixture({ artistNames = ['Tiësto'], promoterNames = ['Inso
     PropertiesService: { getScriptProperties: () => ({ getProperty: key => properties[key] ?? null }) },
     LockService: { getScriptLock: () => ({ tryLock() { log.push('lock'); return !busy; }, releaseLock() { log.push('release'); } }) },
     SpreadsheetApp: {
-      openById(id) { opens.push(id); log.push('open'); return { getSheetById: id => {
+      openById(id) { opens.push(id); log.push('open'); return { getSpreadsheetTimeZone: () => 'America/Chicago', getSheetById: id => {
         sheetIds.push(id);
         return id === 30 ? upcoming : catalogsPresent && id === 10 ? artist : catalogsPresent && id === 20 ? promoter : null;
       } }; },
       flush() { log.push('flush'); },
       newRichTextValue() { return { setText(text) { this.text = text; return this; }, setTextStyle(style) { this.style = style; return this; }, build() { return { text: this.text, style: this.style }; } }; },
     },
+    Utilities: { formatDate: (date, zone, format) => date.toISOString().slice(0,10) },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: text => ({ text, setMimeType() { return this; } }) },
   });
   vm.runInContext(script, context);
-  return { artist, promoter, writes, formats, opens, sheetIds, showRanges, log,
+  return { artist, promoter, upcoming, showRows, writes, formats, opens, sheetIds, showRanges, log,
     post(input) { return JSON.parse(context.doPost({ postData: { contents: JSON.stringify(input) } }).text); },
     get() { return JSON.parse(context.doGet().text); },
   };
 }
 
-test('bridge requires authentication and only accepts the three fixed operations', async () => {
+test('bridge requires authentication and only accepts the four fixed operations', async () => {
   const fixture = await bridgeFixture();
   assert.equal(fixture.post({ action: 'readCatalog', secret: 'wrong' }).code, 'UNAUTHORIZED');
   assert.equal(fixture.post({ action: 'deleteSheet', secret: env.ARTIST_CATALOG_SECRET }).code, 'INVALID_ACTION');
@@ -431,4 +452,168 @@ test('concurrent show reads share only read work and failed artist mutations are
   assert.notEqual(first.rows[1][0], second.rows[1][0]);
   await assert.rejects(catalog.ensureArtist('Sample New'), unavailable);
   assert.equal(writes, 1);
+});
+
+const verifiedEvent = {
+  artist: 'Sample Néon', event: 'Sample Festival', venue: 'Sample Hall', city: 'Dallas, TX',
+  address: '1 Demo Way', date: '2030-10-09', ticketUrl: 'https://tickets.example.com/events/sample',
+  youtubeUrl: 'https://youtu.be/sample-song', sourceUrl: 'https://artist.example.com/events/sample',
+};
+const eventRow = event => [event.artist, event.event, event.venue, event.city, event.address, event.ticketUrl, event.date, event.youtubeUrl];
+
+test('ensureEvent authenticates a single explicit write with a normalized event and validates its receipt', async () => {
+  let body, calls = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (url, options) => {
+    calls++; assert.equal(url, env.ARTIST_CATALOG_URL); assert.equal(options.method, 'POST');
+    body = JSON.parse(options.body);
+    return json({ ok: true, status: 'added', row: 3, event: body.event });
+  } });
+  const result = await catalog.ensureEvent({ ...verifiedEvent, artist: '  Sample   Néon ' });
+  assert.deepEqual(result, { status: 'added', row: 3, event: verifiedEvent });
+  assert.deepEqual(body, { secret: env.ARTIST_CATALOG_SECRET, action: 'ensureEvent', event: verifiedEvent });
+  assert.equal(calls, 1);
+  assert.equal(Object.hasOwn(result, 'secret'), false);
+});
+
+test('event input rejects unverified shapes, invalid calendar dates and unsafe URLs before any write', async () => {
+  let calls = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async () => { calls++; throw new Error(); } });
+  const fixture = await bridgeFixture();
+  const changes = [
+    { artist: '' }, { city: '' }, { event: '', venue: '' }, { date: '2030-02-29' }, { date: '2030-13-01' },
+    { date: '10/9/2030' }, { venue: 'Sample\nHall' }, { sourceUrl: '' }, { sourceUrl: 'http://artist.example.com/show' },
+    { ticketUrl: 'https://user:password@tickets.example.com/' }, { sourceUrl: 'https://127.0.0.1/' },
+    { sourceUrl: 'https://artist.example.com:444/' }, { youtubeUrl: 'https://other.example.com/' }, { arbitraryRange: 'A:Z' },
+  ];
+  for (const change of changes) {
+    const event = { ...verifiedEvent, ...change };
+    await assert.rejects(catalog.ensureEvent(event), error => error.code === 'INVALID_EVENT');
+    assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event }).code, 'INVALID_EVENT');
+  }
+  assert.equal(calls, 0); assert.deepEqual(fixture.opens, []); assert.deepEqual(fixture.writes, []);
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: 'wrong', event: verifiedEvent }).code, 'UNAUTHORIZED');
+});
+
+test('event writes are disconnected honestly, propagate cancellation, and are never retried automatically', async () => {
+  await assert.rejects(createArtistCatalog({ env: {} }).ensureEvent(verifiedEvent), error => error.code === 'NOT_CONFIGURED');
+  let calls = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async () => { calls++; throw new Error('private provider detail'); } });
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(catalog.ensureEvent(verifiedEvent, { signal: controller.signal }), error => error.code === 'CANCELLED');
+  assert.equal(calls, 0);
+  await assert.rejects(catalog.ensureEvent(verifiedEvent), unavailable); assert.equal(calls, 1);
+});
+
+test('a forged event receipt cannot claim a successful save for a different identity', async () => {
+  for (const change of [{ status: 'saved' }, { row: 1 }, { row: 10002 }, { event: { ...verifiedEvent, artist: 'Another Artist' } }, { event: { ...verifiedEvent, date: '2030-10-10' } }]) {
+    const catalog = createArtistCatalog({ env, fetchImpl: async () => json({ ok: true, status: 'added', row: 2, event: verifiedEvent, ...change }) });
+    await assert.rejects(catalog.ensureEvent(verifiedEvent), unavailable);
+  }
+});
+
+test('a successful event write retires an older shared raw-show read for subsequent visitors', async () => {
+  const old = deferredCatalog(); let reads = 0;
+  const catalog = createArtistCatalog({ env, fetchImpl: async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.action === 'ensureEvent') return json({ ok: true, status: 'added', row: 2, event: body.event });
+    reads++; return reads === 1 ? old.promise : json({ ok: true, rows: [showHeaders, eventRow(verifiedEvent)] });
+  } });
+  const earlier = catalog.readShows(); await Promise.resolve(); await Promise.resolve();
+  await catalog.ensureEvent(verifiedEvent);
+  assert.deepEqual((await catalog.readShows()).rows, [showHeaders, eventRow(verifiedEvent)]);
+  old.resolve(json({ ok: true, rows: [showHeaders] })); await earlier;
+  assert.equal(reads, 2);
+});
+
+test('bridge event appends map existing headers without changing other values or formulas', async () => {
+  const headers = ['Style', ...showHeaders.toReversed(), 'User Formula'];
+  const oldRow = ['User style', ...eventRow({ ...verifiedEvent, artist: 'Sample Prior' }).toReversed(), '42'];
+  const formulas = [Array(headers.length).fill(''), [...Array(headers.length - 1).fill(''), '=40+2']];
+  const fixture = await bridgeFixture({ showRows: [headers, oldRow], showFormulas: formulas });
+  const result = fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent, sheetId: -1 });
+  assert.equal(result.status, 'added'); assert.equal(result.row, 3);
+  assert.deepEqual(fixture.showRows[1], oldRow); assert.equal(formulas[1].at(-1), '=40+2');
+  assert.equal(fixture.showRows[2][0], ''); assert.equal(fixture.showRows[2].at(-1), '');
+  assert.deepEqual(fixture.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET }).rows[2], eventRow(verifiedEvent));
+  assert.ok(fixture.log.indexOf('lock') < fixture.log.indexOf('write'));
+  assert.equal(fixture.log.at(-2), 'release'); assert.equal(fixture.log.at(-1), 'open');
+});
+
+test('bridge merges only blank verified fields, retaining existing names, dates and populated facts', async () => {
+  const row = ['SAMPLE neon', '', '', '', '', verifiedEvent.ticketUrl, 'Wed, Oct 9, 2030', ''];
+  const fixture = await bridgeFixture({ showRows: [showHeaders, row] });
+  const result = fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent });
+  assert.equal(result.status, 'merged'); assert.equal(result.row, 2); assert.equal(fixture.showRows.length, 2);
+  assert.deepEqual(fixture.showRows[1], ['SAMPLE neon', verifiedEvent.event, verifiedEvent.venue, verifiedEvent.city, verifiedEvent.address, verifiedEvent.ticketUrl, 'Wed, Oct 9, 2030', verifiedEvent.youtubeUrl]);
+  const next = { ...verifiedEvent, event: 'Verified Alternate Title', venue: 'Verified Alternate Venue', address: 'Verified Alternate Address' };
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: next }).status, 'exists');
+  assert.equal(fixture.showRows[1][1], verifiedEvent.event); assert.equal(fixture.showRows[1][2], verifiedEvent.venue);
+});
+
+test('event identity is idempotent after a lost receipt and an optional existing source column is used', async () => {
+  const fixture = await bridgeFixture({ showRows: [[...showHeaders, 'Source Link']] });
+  const request = { action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent };
+  const first = fixture.post(request), writeCount = fixture.writes.length;
+  assert.equal(first.status, 'added'); assert.equal(fixture.showRows[1].at(-1), verifiedEvent.sourceUrl);
+  assert.equal(fixture.post(request).status, 'exists');
+  assert.equal(fixture.showRows.length, 2); assert.equal(fixture.writes.length, writeCount);
+});
+
+test('same-artist date/city ambiguity blocks duplicates while another festival artist gets its own row', async () => {
+  const fixture = await bridgeFixture({ showRows: [showHeaders, eventRow(verifiedEvent)] });
+  const different = { ...verifiedEvent, event: 'Another Party', venue: 'Another Hall', ticketUrl: 'https://tickets.example.com/other', sourceUrl: 'https://artist.example.com/other' };
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: different }).status, 'conflict');
+  assert.equal(fixture.writes.length, 0);
+  const artist = { ...verifiedEvent, artist: 'Sample Second DJ' };
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: artist }).status, 'added');
+  assert.equal(fixture.showRows.length, 3);
+  const ambiguous = await bridgeFixture({ showRows: [showHeaders, eventRow(verifiedEvent), eventRow(different)] });
+  assert.equal(ambiguous.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent }).status, 'conflict');
+  assert.equal(ambiguous.writes.length, 0);
+});
+
+test('blank-result formulas are preserved and native validation/protection/merged cells block writes', async () => {
+  const row = eventRow({ ...verifiedEvent, address: '', youtubeUrl: '' });
+  const formulas = [Array(8).fill(''), ['', '', '', '', '=IF(TRUE,"","")', '', '', '']];
+  const fixture = await bridgeFixture({ showRows: [showHeaders, row], showFormulas: formulas });
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent }).status, 'merged');
+  assert.equal(fixture.showRows[1][4], ''); assert.equal(formulas[1][4], '=IF(TRUE,"","")');
+  for (const option of [
+    { showValidations: { '2:1': { native: true } } }, { showProtectedCells: ['2:6'] }, { showMergedCells: ['2:3'] },
+  ]) {
+    const blocked = await bridgeFixture({ showRows: [showHeaders], ...option });
+    assert.equal(blocked.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent }).status, 'conflict');
+    assert.equal(blocked.writes.length, 0);
+  }
+});
+
+test('missing or ambiguous headers and malformed existing dates cannot cause speculative writes', async () => {
+  for (const headers of [showHeaders.slice(1), [...showHeaders, 'Artist'], [...showHeaders, 'Source URL', 'Source Link']]) {
+    const fixture = await bridgeFixture({ showRows: [headers] });
+    assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent }).code, 'INVALID_STRUCTURE');
+    assert.equal(fixture.writes.length, 0); assert.equal(fixture.log.at(-1), 'release');
+  }
+  const partial = await bridgeFixture({ showRows: [showHeaders, eventRow({ ...verifiedEvent, date: '' })] });
+  assert.equal(partial.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: verifiedEvent }).status, 'conflict');
+  assert.equal(partial.writes.length, 0);
+});
+
+test('event text is written as literal rich text and writer contention never appends a row', async () => {
+  const event = { ...verifiedEvent, event: '=IMPORTXML("https://example.com", "//p")' };
+  const fixture = await bridgeFixture({ showRows: [showHeaders] });
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event }).status, 'added');
+  assert.equal(fixture.showRows[1][1], event.event);
+  assert.ok(fixture.writes.every(write => write.style.retained));
+  const busy = await bridgeFixture({ showRows: [showHeaders], busy: true });
+  assert.equal(busy.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event }).code, 'BUSY');
+  assert.equal(busy.writes.length, 0); assert.equal(busy.showRows.length, 1);
+});
+
+
+test('region conflicts for a shared city name cannot silently merge distinct verified places', async () => {
+  const prior = { ...verifiedEvent, city: 'Paris, TX' };
+  const incoming = { ...verifiedEvent, city: 'Paris, France', ticketUrl: 'https://tickets.example.com/paris-france', sourceUrl: 'https://artist.example.com/paris-france' };
+  const fixture = await bridgeFixture({ showRows: [showHeaders, eventRow(prior)] });
+  assert.equal(fixture.post({ action: 'ensureEvent', secret: env.ARTIST_CATALOG_SECRET, event: incoming }).status, 'conflict');
+  assert.equal(fixture.writes.length, 0); assert.equal(fixture.showRows.length, 2);
 });

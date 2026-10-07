@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { createFeedbackHandler } from './feedback.mjs';
+import {createContributionService} from './contributions-service.mjs';
+import {createContributionHandler} from './contributions.mjs';
 import path from 'node:path';
 import { projectDir } from './config.mjs';
 import { createShowSource } from './providers.mjs';
@@ -44,15 +46,18 @@ const publicFields=['id','artist','event','type','entryCount','venue','address',
 /** Browser searches share show selection rules without registering a messaging
  * user, opening SQLite, or retaining the visitor's location.
  */
-export function createBrowserHandler({env=process.env,source,geocoder,catalog,verifier,feedbackStore,clock=()=>new Date(),messagingReady=false}={}) {
+export function createBrowserHandler({env=process.env,source,geocoder,catalog,verifier,feedbackStore,contributionStore,contributionAI,eventVerifier,contributionService,clock=()=>new Date(),messagingReady=false}={}) {
   const config=configForBrowser(env);
   const handleFeedback=createFeedbackHandler({env,store:feedbackStore});
   source??=createShowSource(config);
   catalog??=createArtistCatalog({env});
   verifier??=createArtistVerifier();
   geocoder??=env.BROWSER_GEOCODER==='google'?new GoogleLocationProvider({apiKey:env.GOOGLE_MAPS_API_KEY}):new CityLocationProvider();
+  contributionService??=createContributionService({env,store:contributionStore,ai:contributionAI,eventVerifier,catalog,verifier,source});
+  const handleContribution=createContributionHandler({env,service:contributionService});
   const sourceMeta={label:'Event feed',snapshot:config.mode==='demo'};
   const assets=new Map([['/',['index.html','text/html; charset=utf-8']],['/browser/app.js',['app.js','text/javascript; charset=utf-8']],['/browser/profiles.js',['profiles.js','text/javascript; charset=utf-8']],['/browser/style.css',['style.css','text/css; charset=utf-8']]]);
+  assets.set('/browser/contributions.js',['contributions.js','text/javascript; charset=utf-8']);
   assets.set('/browser/feedback.js',['feedback.js','text/javascript; charset=utf-8']);
   assets.set('/browser/whisper-client.js',['whisper-client.js','text/javascript; charset=utf-8']);
   const files=new Map();let inFlight=0;
@@ -175,6 +180,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
   const handle=async(req,res)=>{
     if (req.method==='GET' && req.url==='/healthz') {send(res,200,{ok:true,mode:messagingReady?'live':'browser',browserReady:true,messagingReady,ready:messagingReady});return true;}
     if (await handleFeedback(req,res)) return true;
+    if (await handleContribution(req,res)) return true;
     let asset=assets.get(req.url);
     const vendor=/^\/browser\/vendor\/(whisper-worker\.bundle\.js(?:\.LEGAL\.txt)?|ort-wasm-simd-threaded(?:\.jsep)?\.(?:mjs|wasm))$/.exec(req.url);
     if (vendor) asset=['vendor/'+vendor[1],vendor[1].endsWith('.wasm')?'application/wasm':vendor[1].endsWith('.txt')?'text/plain; charset=utf-8':'text/javascript; charset=utf-8'];
@@ -214,5 +220,5 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
     } finally {clearTimeout(timeout);if(counted)inFlight--;req.off('aborted',disconnected);res.off('close',disconnected);}
     return true;
   };
-  return {handle,search,config};
+  return {handle,search,config,startContributions:()=>contributionService.start(),stopContributions:()=>contributionService.stop()};
 }

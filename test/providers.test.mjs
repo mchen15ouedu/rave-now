@@ -284,3 +284,46 @@ test('a shared event read has a bounded deadline even when a provider does not h
   assert.equal((await source.load()).shows.length, 1);
   assert.equal(calls, 2);
 });
+
+test('source invalidation makes a just-saved event visible before the normal cache expires', async () => {
+  let calls = 0;
+  const changed = [headers, ['Sample Newly Saved', ...data[1].slice(1)]];
+  const source = createShowSource({ mode: 'apps-script', bridge: { readShows: async () => ({ rows: ++calls === 1 ? data : changed }) } });
+  await source.load(); await source.load(); assert.equal(calls, 1);
+  source.invalidate();
+  assert.equal((await source.load()).shows[0].artist, 'Sample Newly Saved');
+  assert.equal(calls, 2);
+});
+
+test('an older read finishing after invalidation cannot replace the new parsed cache', async () => {
+  const pending = deferredRead(), started = deferredRead(); let calls = 0;
+  const changed = [headers, ['Sample Current', ...data[1].slice(1)]];
+  const source = createShowSource({ mode: 'apps-script', bridge: { readShows: async () => {
+    calls++; if (calls === 1) { started.resolve(); return pending.promise; }
+    return { rows: changed };
+  } } });
+  const oldVisitor = source.load(); await started.promise;
+  source.invalidate(); assert.equal((await source.load()).shows[0].artist, 'Sample Current');
+  pending.resolve({ rows: data }); await oldVisitor;
+  assert.equal((await source.load()).shows[0].artist, 'Sample Current'); assert.equal(calls, 2);
+});
+
+test('invalidation retires the internal Apps Script reader as well as parsed source work', async () => {
+  const pending = deferredRead(), started = deferredRead(); let calls = 0;
+  const fullHeaders = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)'];
+  const oldRows = [fullHeaders, ['Sample Old', '', 'Sample Hall', 'Dallas, TX', '', '', '2030-10-09', '']];
+  const currentRows = [fullHeaders, ['Sample Current', ...oldRows[1].slice(1)]];
+  const source = createShowSource({ mode: 'apps-script', bridgeUrl: 'https://script.google.com/macros/s/test-deployment/exec', bridgeSecret: 'test-key-never-a-real-secret-00000000', fetchImpl: async () => {
+    calls++; if (calls === 1) { started.resolve(); return pending.promise; }
+    return new Response(JSON.stringify({ ok: true, rows: currentRows }));
+  } });
+  const oldVisitor = source.load(); await started.promise;
+  source.invalidate(); const newVisitor = source.load();
+  await new Promise(setImmediate);
+  const beforeOldCompletes = calls;
+  pending.resolve(new Response(JSON.stringify({ ok: true, rows: oldRows })));
+  const fresh = await newVisitor; await oldVisitor;
+  assert.equal(beforeOldCompletes, 2, 'The current visitor must not join the retired catalog read');
+  assert.equal(fresh.shows[0].artist, 'Sample Current');
+  assert.equal((await source.load()).shows[0].artist, 'Sample Current'); assert.equal(calls, 2);
+});

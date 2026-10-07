@@ -10,12 +10,13 @@
   <script type="module" src="/browser/app.js"></script>
   <script type="module" src="/browser/profiles.js"></script>
   <script type="module" src="/browser/feedback.js"></script>
+  <script type="module" src="/browser/contributions.js"></script>
 </head>
 <body>
   <main>
     <header class="app-header">
       <h1>Rave Now</h1>
-      <button id="profiles-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="profiles-dialog"><span id="profiles-summary">Link music profiles</span></button>
+      <div class="header-actions"><button id="feedback-open" class="feedback-link" type="button" aria-haspopup="dialog" aria-controls="feedback-dialog">Give feedback</button><button id="profiles-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="profiles-dialog"><span id="profiles-summary">Link music profiles</span></button></div>
     </header>
     <dialog id="profiles-dialog" aria-labelledby="profiles-title">
       <form id="profiles-form" novalidate>
@@ -36,7 +37,7 @@
       </form>
     </dialog>
     <form id="location-form">
-      <label for="city">Location or artist</label>
+      <div class="search-label"><label for="city">Location or artist</label><button id="contribution-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="contribution-dialog">Missing artist?</button></div>
       <div class="location-entry">
         <input id="city" name="query" type="text" placeholder="City, ZIP or artist name" maxlength="160" autocomplete="off" list="artist-suggestions" required>
         <button type="submit">Find shows</button>
@@ -53,16 +54,26 @@
     <p id="location-status" role="status" aria-live="polite">Finding your location…</p>
     <p id="feed-freshness" hidden></p>
     <section id="show-grid" aria-label="Nearby shows" aria-busy="false"></section>
-    <footer><button id="feedback-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="feedback-dialog">Give feedback</button><br>Location data: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
-    <dialog id="feedback-dialog" aria-labelledby="feedback-title">
+    <footer>Location data: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener noreferrer">CC BY 4.0</a></footer>
+    <dialog id="feedback-dialog" aria-labelledby="feedback-title" aria-describedby="feedback-intro">
       <h2 id="feedback-title">Give feedback</h2>
-      <p class="profile-note">What could be better? Record up to 60 seconds or type below.</p>
+      <p id="feedback-intro" class="profile-note">What could be better? Record up to 60 seconds or type below.</p>
       <div class="feedback-voice"><button id="feedback-record" type="button">🎙 Record voice</button><button id="feedback-stop" type="button" hidden>Stop</button></div>
       <label for="feedback-text">Your feedback</label>
       <textarea id="feedback-text" rows="5" maxlength="2000" placeholder="Tell us what you don’t like or what could improve."></textarea>
       <p class="profile-note">Voice is transcribed on your device. Review the text before sending. Only the text you send is saved privately for app improvements.</p>
       <p id="feedback-status" role="status" aria-live="polite"></p>
       <div class="profile-actions"><button id="feedback-cancel" class="secondary" type="button">Close</button><button id="feedback-submit" type="button">Send feedback</button></div>
+    </dialog>
+    <dialog id="contribution-dialog" aria-labelledby="contribution-title" aria-describedby="contribution-intro">
+      <h2 id="contribution-title">Missing artist?</h2>
+      <p id="contribution-intro" class="profile-note">Tell us who’s missing. If you know about a show, include its date, venue or city, and a ticket or event URL. You can record up to 60 seconds or type below.</p>
+      <div class="feedback-voice"><button id="contribution-record" type="button">🎙 Record voice</button><button id="contribution-stop" type="button" hidden>Stop</button></div>
+      <label for="contribution-text">Artist and show details</label>
+      <textarea id="contribution-text" rows="5" maxlength="2000" placeholder="Artist name, show date, place, and ticket or event URL (if known)."></textarea>
+      <p class="profile-note">Voice is transcribed on your device. Review and edit the text before sending. Only your text is saved privately for processing. Saving does not mean the artist or show has been added yet.</p>
+      <p id="contribution-status" role="status" aria-live="polite"></p>
+      <div class="profile-actions"><button id="contribution-cancel" class="secondary" type="button">Close</button><button id="contribution-submit" type="button">Send details</button></div>
     </dialog>
   </main>
 </body>

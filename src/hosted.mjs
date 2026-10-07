@@ -14,7 +14,10 @@ export function createHostedApp({env=process.env,browser={},...options}={}) {
     catch {/* A public endpoint never discloses configuration or secrets. */}
   }
   const browserApp=createBrowserHandler({...browser,env,messagingReady:Boolean(config)});
-  if (config) return {...createApp({...options,config,browserHandler:browserApp.handle}),config,ready:true,browserApp};
+  if(config){
+    const app=createApp({...options,config,browserHandler:browserApp.handle});
+    return {...app,config,ready:true,browserApp,startReminders(){app.startReminders();browserApp.startContributions();},async stopReminders(){await app.stopReminders();await browserApp.stopContributions();}};
+  }
   const requestedPort=Number(env.PORT??7860);
   const port=Number.isInteger(requestedPort)&&requestedPort>=0&&requestedPort<=65535?requestedPort:7860;
   const server=http.createServer(async(req,res)=>{
@@ -28,7 +31,7 @@ export function createHostedApp({env=process.env,browser={},...options}={}) {
     }
   });
   server.requestTimeout=20_000;server.headersTimeout=10_000;server.keepAliveTimeout=5_000;
-  return {server,browserApp,config:{host:'0.0.0.0',port},ready:false,startReminders(){},async stopReminders(){}};
+  return {server,browserApp,config:{host:'0.0.0.0',port},ready:false,startReminders(){browserApp.startContributions();},async stopReminders(){await browserApp.stopContributions();}};
 }
 
 if (process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)) {

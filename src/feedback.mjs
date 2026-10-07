@@ -4,7 +4,7 @@ function send(res,status,value) {
   res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
   res.end(JSON.stringify(value));
 }
-function readBody(req,signal) {
+export function readBody(req,signal) {
   return new Promise((resolve,reject)=>{
     const chunks=[];let length=0;
     const cleanup=()=>{req.off('data',data);req.off('end',end);req.off('error',failed);signal.removeEventListener('abort',cancelled);};
@@ -21,7 +21,7 @@ function readBody(req,signal) {
     if(signal.aborted)cancelled();
   });
 }
-async function waitForSave(operation,signal) {
+export async function waitForSave(operation,signal) {
   let cancelled;
   const aborted=new Promise((_,reject)=>{cancelled=()=>reject(signal.reason??new DOMException('Request cancelled','AbortError'));signal.addEventListener('abort',cancelled,{once:true});});
   try {signal.throwIfAborted();return await Promise.race([Promise.resolve().then(operation),aborted]);}

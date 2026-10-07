@@ -1,4 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { isIP } from 'node:net';
 import { cleanArtistName, normalizeArtistName, createReadCoalescer } from './artist-catalog.mjs';
 
 const API = 'https://musicbrainz.org/ws/2/artist/';
@@ -8,6 +9,7 @@ const MBID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NONMUSIC = new Set(['spokenword', 'interview', 'audiobook', 'audiodrama', 'fieldrecording']);
 const PLACEHOLDERS = new Set(['various artists', '[unknown]', '[no artist]', '[anonymous]', 'unknown artist']);
 const typeKey = value => String(value || '').toLowerCase().replace(/[^a-z]/g, '');
+const HOMEPAGE_RELATION = 'fe33d22f-c3b0-4d68-bd53-a856badf2b15';
 const failed = () => new Error('Artist verification is unavailable.');
 const clamp = (value, fallback, maximum) => Math.min(maximum, Math.max(1, Number(value) || fallback));
 
@@ -119,6 +121,29 @@ function hasMusicCredit(artist) {
   return artist.recordings.some(titled) && (!groups.length || groups.some(group => !nonmusic(group)));
 }
 
+function officialHomepages(artist) {
+  if (!Array.isArray(artist.relations) || artist.relations.length > 500) return [];
+  const urls = new Set();
+  for (const relation of artist.relations) {
+    if (!relation || relation.type !== 'official homepage' || relation['target-type'] !== 'url' ||
+        relation.direction !== 'forward' || relation.ended === true ||
+        relation['type-id'] && relation['type-id'] !== HOMEPAGE_RELATION) continue;
+    const value = relation.url?.resource;
+    if (typeof value !== 'string' || value.length > 2048 || /[\p{Cc}\p{Cf}\s]/u.test(value)) continue;
+    let url;
+    try { url = new URL(value); } catch { continue; }
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.search ||
+        isIP(url.hostname) || !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}$/.test(url.hostname) ||
+        /\.(?:localhost|local|internal|lan|home|onion|invalid|test|example)$/.test(url.hostname) || /[<>"\\]/.test(url.href)) continue;
+    url.hash = '';
+    urls.add(url.href);
+    if (urls.size === 5) break;
+  }
+  return [...urls];
+}
+
+const copyResult = value => ({ ...value, ...(value.officialUrls ? { officialUrls: [...value.officialUrls] } : {}) });
+
 /** Read-only MusicBrainz evidence. Search scores and aliases cannot authorize
  * additions. Public JSON metadata requires no key; see MusicBrainz's API,
  * Search and Rate_Limiting documentation. No provider payload is exposed. */
@@ -152,7 +177,7 @@ export function createArtistVerifier({
       try { clean = cleanArtistName(name); key = normalizeArtistName(clean); }
       catch { return { status: 'unverified' }; }
       const cached = cache.get(key);
-      if (cached?.expiresAt > now()) return { ...cached.value };
+      if (cached?.expiresAt > now()) return copyResult(cached.value);
       cache.delete(key);
       try {
         const result = await read(key, async sharedSignal => {
@@ -166,18 +191,20 @@ export function createArtistVerifier({
           if (candidate) {
             const id = candidate.id.toLowerCase(), detailsUrl = new URL(id, API);
             detailsUrl.searchParams.set('fmt', 'json');
-            detailsUrl.searchParams.set('inc', 'recordings+releases+release-groups');
+            detailsUrl.searchParams.set('inc', 'recordings+releases+release-groups+url-rels');
             const artist = await request(detailsUrl, sharedSignal);
             if (typeof artist.name !== 'string' || artist.id?.toLowerCase() !== id) throw failed();
             if (normalizeArtistName(artist.name) === key && hasMusicCredit(artist)) {
               value = { status: 'verified', name: cleanArtistName(artist.name), source: 'MusicBrainz', sourceUrl: `https://musicbrainz.org/artist/${id}` };
+              const officialUrls = officialHomepages(artist);
+              if (officialUrls.length) value.officialUrls = officialUrls;
             }
           }
           sharedSignal.throwIfAborted();
           remember(key, value);
           return value;
         }, { signal });
-        return { ...result };
+        return copyResult(result);
       } catch {
         signal?.throwIfAborted();
         return { status: 'unavailable', source: 'MusicBrainz' };

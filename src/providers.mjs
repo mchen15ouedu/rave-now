@@ -68,7 +68,7 @@ export function createShowSource(config = {}) {
   const cacheTtlMs = Math.min(Math.max(Number(config.cacheTtlMs ?? 60000) || 0, 0), 60000);
   const maxRows = Math.min(Math.max(Number(config.maxRows) || 10000, 1), 10000);
   const read = createReadCoalescer({ timeoutMs: config.readTimeoutMs ?? 40_000 });
-  let cached;
+  let cached, generation = 0;
   let auth;
   let bridge;
 
@@ -135,7 +135,7 @@ export function createShowSource(config = {}) {
     return values.values;
   }
 
-  async function readFresh(signal) {
+  async function readFresh(signal, version) {
     const rows = await loadRows(signal);
     signal.throwIfAborted();
     let shows;
@@ -155,18 +155,27 @@ export function createShowSource(config = {}) {
     }
     signal.throwIfAborted();
     const value = { shows, loadedAt: new Date(clock()).toISOString(), source: mode === 'demo' ? 'snapshot' : mode==='apps-script'?'apps-script':'google-sheets', ...(snapshotUpdatedAt?{snapshotUpdatedAt}:{}), ...(sample?{sample:true}:{}), warnings: [...shows.warnings] };
-    if (cacheTtlMs) cached = { value, expiresAt: clock() + cacheTtlMs };
+    if (cacheTtlMs && version === generation) cached = { value, expiresAt: clock() + cacheTtlMs };
     return value;
   }
 
   return {
+    invalidate() {
+      generation++;
+      cached = undefined;
+      read.invalidate('events');
+      // A pre-write Apps Script request may still finish for its old waiters.
+      // Retire that reader so subsequent visitors request the current sheet.
+      bridge = undefined;
+    },
     async load({ signal } = {}) {
       signal?.throwIfAborted();
       if (cached && cached.expiresAt > clock()) return { ...cached.value, warnings: [...cached.value.warnings] };
       // Expired results are discarded; an outage never serves stale or demo data.
       cached = undefined;
       let value;
-      try { value = await read('events', readFresh, { signal }); }
+      const version = generation;
+      try { value = await read('events', upstreamSignal => readFresh(upstreamSignal, version), { signal }); }
       catch (error) {
         if (signal?.aborted || error?.name === 'AbortError') throw error;
         if (error instanceof ShowSourceError) throw error;
