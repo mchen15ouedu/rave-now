@@ -133,7 +133,14 @@ function showRows(values) {
     if (index < 0 || keys.lastIndexOf(key) !== index) throw unavailable();
     return index;
   });
-  const rows = [SHOW_HEADERS.slice()];
+  const publicHeaders = SHOW_HEADERS.slice();
+  const styleIndex = keys.indexOf('style');
+  if (styleIndex >= 0) {
+    if (keys.lastIndexOf('style') !== styleIndex) throw unavailable();
+    publicHeaders.push('Style');
+    indexes.push(styleIndex);
+  }
+  const rows = [publicHeaders];
   for (const row of values.slice(1)) {
     if (!Array.isArray(row) || row.length !== headers.length || row.some(value => typeof value !== 'string')) throw unavailable();
     rows.push(indexes.map(index => row[index]));

@@ -5,7 +5,7 @@ import { calendarDate, parseShowDate } from '../src/shows.mjs';
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dayMilliseconds = 86_400_000;
-const headers = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)'];
+const headers = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)', 'Style'];
 const description = 'Fictional sample events for demonstrating Rave Now. These are not real shows or ticket offers.';
 const addDays = (date, offset) => new Date(new Date(`${date}T12:00:00Z`).getTime() + offset * dayMilliseconds).toISOString().slice(0, 10);
 const dateLabel = date => new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00Z`));
@@ -26,6 +26,7 @@ export function buildSampleData(anchorDate = calendarDate(new Date(), process.en
       tickets ? `https://example.com/sample-tickets/${slug(title)}` : '',
       `${dateLabel(addDays(anchorDate, offset))} - ${time}`,
       artist && listen ? `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}` : '',
+      artist === 'Sample Circuit' ? 'Techno' : artist === 'Sample Pulse' ? 'Trance' : 'House',
     ]);
   };
 

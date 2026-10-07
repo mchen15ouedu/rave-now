@@ -39,6 +39,7 @@ input:focus-visible,button:focus-visible,a:focus-visible{outline:2px solid #1458
 .show-card{padding:20px 0;border-bottom:1px solid #ddd;overflow-wrap:anywhere}
 .show-card h2{font-size:20px;line-height:1.3;margin:0 0 8px;font-weight:650}
 .show-card p{font-size:15px;line-height:1.5;margin:4px 0}
+.show-card .show-style{font-size:14px;color:#5b5b5b}
 .show-date{font-weight:500}
 .show-address,.show-distance{color:#5b5b5b}
 .show-distance{font-size:13px!important}

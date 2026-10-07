@@ -1,24 +1,24 @@
-Artist	Event	Location	City	Address	Ticket Link	Show Time	YouTube (Most Popular Song)
-Sample Archive		Sample Yesterday Hall	Dallas, TX		https://example.com/sample-tickets/sample-archive	Sun, Oct 4, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Archive
-Sample Dawn		Sample Daylight Room	Dallas, TX	Dallas, TX	https://example.com/sample-tickets/sample-dawn	Mon, Oct 5, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Dawn
-Sample Skyline		Sample City Room	New York, NY		https://example.com/sample-tickets/sample-skyline	Mon, Oct 5, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Skyline
-Sample Circuit		Sample Warehouse	Dallas, TX	Dallas, TX	https://example.com/sample-tickets/sample-circuit	Fri, Oct 9, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Circuit
-Sample Vector		Sample Riverside Room	Fort Worth, TX		https://example.com/sample-tickets/sample-vector	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Vector
-Sample Drift		Sample Distant Room	Austin, TX		https://example.com/sample-tickets/sample-drift	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Drift
-Sample Mirage		Sample Desert Club	Las Vegas, NV	Las Vegas, NV	https://example.com/sample-tickets/sample-mirage	Thu, Oct 8, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Mirage
-Sample Prism		Sample Desert Club	Las Vegas, NV	Las Vegas, NV	https://example.com/sample-tickets/sample-prism	Fri, Oct 9, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Prism
-Sample Orbit		Sample Desert Club	Las Vegas, NV	Las Vegas, NV	https://example.com/sample-tickets/sample-orbit	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Orbit
-Sample Aurora		TBA	Los Angeles		https://example.com/sample-tickets/sample-aurora	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Aurora
-Sample Metro		Sample Midtown Room	New York, NY	123 Sample Avenue, New York, NY 10036	https://example.com/sample-tickets/sample-metro	Fri, Oct 9, 2026 - 11:00 PM	https://www.youtube.com/results?search_query=Sample%20Metro
-Sample Tidal		Sample Brooklyn Room	Brooklyn, NY		https://example.com/sample-tickets/sample-tidal	Fri, Oct 9, 2026 - 9:00 PM	
-Sample Pulse		Sample Midtown Room	New York, NY	123 Sample Avenue, New York, NY 10036	https://example.com/sample-tickets/sample-pulse	Sat, Oct 10, 2026 - 11:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse
-Sample Pulse		Sample Later Room	New York, NY		https://example.com/sample-tickets/sample-pulse	Tue, Oct 20, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse
-Sample Pulse		Sample Riverside Room	Fort Worth, TX		https://example.com/sample-tickets/sample-pulse	Fri, Oct 23, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse
-Sample Pulse		Sample Winter Room	New York, NY		https://example.com/sample-tickets/sample-pulse	Thu, Nov 19, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse
-Sample Horizon		Sample Future Room	New York, NY		https://example.com/sample-tickets/sample-horizon	Mon, Feb 22, 2027 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Horizon
-	Sample City Lights Announcement	Sample Open Air Stage	Fort Worth, TX		https://example.com/sample-tickets/sample-city-lights-announcement	Sun, Oct 11, 2026 - 9:00 PM	
-Sample Amber	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-amber	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Amber
-Sample Cobalt	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-cobalt	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Cobalt
-Sample Velvet	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-velvet	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Velvet
-Sample Delta	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-delta	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Delta
-Sample Compass		TBA	TBA			Sat, Oct 10, 2026 - 9:00 PM	
+Artist	Event	Location	City	Address	Ticket Link	Show Time	YouTube (Most Popular Song)	Style
+Sample Archive		Sample Yesterday Hall	Dallas, TX		https://example.com/sample-tickets/sample-archive	Sun, Oct 4, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Archive	House
+Sample Dawn		Sample Daylight Room	Dallas, TX	Dallas, TX	https://example.com/sample-tickets/sample-dawn	Mon, Oct 5, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Dawn	House
+Sample Skyline		Sample City Room	New York, NY		https://example.com/sample-tickets/sample-skyline	Mon, Oct 5, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Skyline	House
+Sample Circuit		Sample Warehouse	Dallas, TX	Dallas, TX	https://example.com/sample-tickets/sample-circuit	Fri, Oct 9, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Circuit	Techno
+Sample Vector		Sample Riverside Room	Fort Worth, TX		https://example.com/sample-tickets/sample-vector	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Vector	House
+Sample Drift		Sample Distant Room	Austin, TX		https://example.com/sample-tickets/sample-drift	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Drift	House
+Sample Mirage		Sample Desert Club	Las Vegas, NV	Las Vegas, NV	https://example.com/sample-tickets/sample-mirage	Thu, Oct 8, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Mirage	House
+Sample Prism		Sample Desert Club	Las Vegas, NV	Las Vegas, NV	https://example.com/sample-tickets/sample-prism	Fri, Oct 9, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Prism	House
+Sample Orbit		Sample Desert Club	Las Vegas, NV	Las Vegas, NV	https://example.com/sample-tickets/sample-orbit	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Orbit	House
+Sample Aurora		TBA	Los Angeles		https://example.com/sample-tickets/sample-aurora	Sat, Oct 10, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Aurora	House
+Sample Metro		Sample Midtown Room	New York, NY	123 Sample Avenue, New York, NY 10036	https://example.com/sample-tickets/sample-metro	Fri, Oct 9, 2026 - 11:00 PM	https://www.youtube.com/results?search_query=Sample%20Metro	House
+Sample Tidal		Sample Brooklyn Room	Brooklyn, NY		https://example.com/sample-tickets/sample-tidal	Fri, Oct 9, 2026 - 9:00 PM		House
+Sample Pulse		Sample Midtown Room	New York, NY	123 Sample Avenue, New York, NY 10036	https://example.com/sample-tickets/sample-pulse	Sat, Oct 10, 2026 - 11:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse	Trance
+Sample Pulse		Sample Later Room	New York, NY		https://example.com/sample-tickets/sample-pulse	Tue, Oct 20, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse	Trance
+Sample Pulse		Sample Riverside Room	Fort Worth, TX		https://example.com/sample-tickets/sample-pulse	Fri, Oct 23, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse	Trance
+Sample Pulse		Sample Winter Room	New York, NY		https://example.com/sample-tickets/sample-pulse	Thu, Nov 19, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Pulse	Trance
+Sample Horizon		Sample Future Room	New York, NY		https://example.com/sample-tickets/sample-horizon	Mon, Feb 22, 2027 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Horizon	House
+	Sample City Lights Announcement	Sample Open Air Stage	Fort Worth, TX		https://example.com/sample-tickets/sample-city-lights-announcement	Sun, Oct 11, 2026 - 9:00 PM		House
+Sample Amber	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-amber	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Amber	House
+Sample Cobalt	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-cobalt	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Cobalt	House
+Sample Velvet	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-velvet	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Velvet	House
+Sample Delta	Sample Daybreak Festival	Sample Festival Grounds	Dallas, TX	TBA	https://example.com/sample-tickets/sample-delta	Sun, Oct 11, 2026 - 9:00 PM	https://www.youtube.com/results?search_query=Sample%20Delta	House
+Sample Compass		TBA	TBA			Sat, Oct 10, 2026 - 9:00 PM		House

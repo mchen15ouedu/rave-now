@@ -109,11 +109,19 @@ function eventResult(entries) {
   const dates = entries.map(({ show }) => show.date).sort();
   const event = usableEventName(first.show.event);
   const ticketLinks = eventTickets(entries);
+  const styles = new Map();
+  for (const { show } of entries) {
+    for (const value of clean(show.style).split(/[,;]/u)) {
+      const style = clean(value);
+      if (style && !styles.has(normalized(style))) styles.set(normalized(style), style);
+    }
+  }
   return {
     ...nearest.show,
     id: `event:${first.show.id ?? first.index}:${dates[0]}`,
     type: 'event',
     artist: event,
+    style: [...styles.values()].join(', '),
     event,
     date: dates[0],
     dateEnd: dates.at(-1),

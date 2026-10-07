@@ -46,7 +46,9 @@ function showCard(show) {
   const dateLine = element('p', 'show-date');
   dateLine.append(date);
   const title = show.type === 'event' ? show.event || show.artist || 'Live event' : show.artist || 'Live show';
-  card.append(element('h2', '', title), dateLine);
+  card.append(element('h2', '', title));
+  if (typeof show.style === 'string' && show.style.trim()) card.append(element('p', 'show-style', show.style.trim()));
+  card.append(dateLine);
   if (show.event && show.type !== 'event') card.append(element('p', '', show.event));
   const venue = [show.venue, show.city].filter(Boolean).join(' · ');
   if (venue) card.append(element('p', '', venue));

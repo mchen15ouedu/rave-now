@@ -18,6 +18,8 @@ Open [http://localhost:7860](http://localhost:7860). The browser command regener
 
 Try **New York, NY**, **Dallas, TX**, or **Las Vegas, NV** for nearby samples, or **artist: Sample Pulse** for an artist search. The sample notice below the search identifies the fictitious feed. Set `BROWSER_PORT` if port 7860 is already in use.
 
+Results show music styles directly below the artist or event name. Grouped festivals combine the styles listed on their matching performer rows; missing styles stay blank.
+
 The page requests location access when opened. Your browser controls its permission dialog. If access is denied or unavailable, enter a city and state/country or a US ZIP code in **Location or artist**. An artist search uses the last accepted location; before a location is available, it searches matching appearances across all sample locations and displays that scope. Use `location: Paris, France` or `artist: Paris` to distinguish an artist from a place.
 
 Slow searches show progress. Temporary search failures offer **Try again**; that button appears only after an error. Unavailable artist suggestions or an artist-list outage do not block valid city searches. During an artist-list outage, an unrecognized query may need `location: City` or `artist: Name` to clarify the search. Artist additions are reported as saved only after confirmation; an unconfirmed update is shown alongside any usable results.

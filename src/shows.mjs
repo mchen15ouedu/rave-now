@@ -78,6 +78,7 @@ export function parseShows(rows) {
   // Optional while the tracker is being updated; locate by header so column insertion is safe.
   indexes.city = headers.indexOf('city');
   indexes.event = headers.indexOf('event');
+  indexes.style = headers.indexOf('style');
   const shows = [];
   let invalidDates = 0;
   let missingArtists = 0;
@@ -108,6 +109,7 @@ export function parseShows(rows) {
     shows.push({
       id: `tracker-row-${index + 2}`,
       artist,
+      style: indexes.style >= 0 ? clean(row[indexes.style]) : '',
       ...(indexes.event >= 0 ? { event } : {}),
       ...(eventOnly ? {
         type: 'event',

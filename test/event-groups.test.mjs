@@ -12,6 +12,15 @@ const row = (index, overrides = {}) => ({
 });
 const rows = (count, overrides) => Array.from({ length: count }, (_, index) => row(index, overrides));
 
+test('festival results combine the listed music styles without duplicates or inferred genres', () => {
+  const input = [row(0, { style: 'House, Techno' }), row(1, { style: ' house ; Trance ' }), row(2, { style: '' }), row(3)];
+  const before = structuredClone(input);
+  assert.equal(groupEventResults(input)[0].style, 'House, Techno, Trance');
+  assert.equal(groupEventResults(rows(4))[0].style, '');
+  assert.equal(groupEventResults(input.slice(0, 3))[0].style, 'House, Techno');
+  assert.deepEqual(input, before);
+});
+
 test('three entries remain separate and four become one named event', () => {
   const three = rows(3);
   assert.deepEqual(groupEventResults(three), three);

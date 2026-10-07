@@ -5,12 +5,29 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createArtistCatalog, CatalogError, cleanArtistName, normalizeArtistName } from '../src/artist-catalog.mjs';
+import { parseShows } from '../src/shows.mjs';
 
 const env = { ARTIST_CATALOG_URL: 'https://script.google.com/macros/s/test-deployment/exec', ARTIST_CATALOG_SECRET: 'test-key-never-a-real-secret-00000000' };
 const json = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 const unavailable = error => error instanceof CatalogError && error.code === 'UNAVAILABLE' && !/private|test-key/.test(error.message);
 const showHeaders = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)'];
 const showRow = ['Steve Angello', 'Test Festival', 'Venue', 'Dallas, TX', '', 'https://tickets.example/event', 'Fri, Oct 9, 2026', 'https://youtu.be/artist'];
+
+test('live bridge preserves optional Style through catalog validation and parsing, excluding private columns', async () => {
+  const headers = ['Style', ...showHeaders, 'Internal Notes'];
+  const fixture = await bridgeFixture({ showRows: [headers, ['  House, Techno  ', ...showRow, 'private notes']] });
+  const response = fixture.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET });
+  assert.deepEqual(response.rows, [[...showHeaders, 'Style'], [...showRow, '  House, Techno  ']]);
+  const catalog = createArtistCatalog({ env, fetchImpl: async () => json(response) });
+  const { rows } = await catalog.readShows();
+  assert.equal(parseShows(rows)[0].style, 'House, Techno');
+  assert.doesNotMatch(JSON.stringify(rows), /private notes|Internal Notes/);
+  assert.equal(parseShows([showHeaders, showRow])[0].style, '');
+  const duplicateRows = [[...showHeaders, 'Style', ' style '], [...showRow, 'House', 'Techno']];
+  const duplicate = await bridgeFixture({ showRows: duplicateRows });
+  assert.equal(duplicate.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET }).code, 'INVALID_STRUCTURE');
+  await assert.rejects(createArtistCatalog({ env, fetchImpl: async () => json({ ok: true, rows: duplicateRows }) }).readShows(), unavailable);
+});
 
 test('artist normalization matches accents, case and spacing while preserving readable spelling', () => {
   assert.equal(cleanArtistName('  Tiësto   &   Friends  '), 'Tiësto & Friends');
@@ -566,7 +583,9 @@ test('bridge event appends map existing headers without changing other values or
   assert.equal(result.status, 'added'); assert.equal(result.row, 3);
   assert.deepEqual(fixture.showRows[1], oldRow); assert.equal(formulas[1].at(-1), '=40+2');
   assert.equal(fixture.showRows[2][0], ''); assert.equal(fixture.showRows[2].at(-1), '');
-  assert.deepEqual(fixture.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET }).rows[2], eventRow(verifiedEvent));
+  const projected = fixture.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET }).rows;
+  assert.equal(projected[1].at(-1), 'User style');
+  assert.deepEqual(projected[2], [...eventRow(verifiedEvent), '']);
   assert.ok(fixture.log.indexOf('lock') < fixture.log.indexOf('write'));
   assert.equal(fixture.log.at(-2), 'release'); assert.equal(fixture.log.at(-1), 'open');
 });
