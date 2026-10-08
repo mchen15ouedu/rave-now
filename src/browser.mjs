@@ -10,7 +10,7 @@ import { CityLocationProvider } from './city-locations.mjs';
 import { GoogleLocationProvider, LocationError } from './locations.mjs';
 import { findNearbyShows, findFutureShows } from './shows.mjs';
 import { browserDateWindow, browserRangeLabels } from './browser-ranges.mjs';
-import { groupEventResults } from './event-groups.mjs';
+import { groupEventResults, mergeShowSlots } from './event-groups.mjs';
 import { createArtistCatalog,cleanArtistName } from './artist-catalog.mjs';
 import { createArtistVerifier } from './artist-verification.mjs';
 import { artistKey, parseSearchQuery, matchingArtistNames, artistMatches, looksLikeLocation, SearchInputError } from './artist-search.mjs';
@@ -42,7 +42,7 @@ async function jsonBody(req) {
   for await (const chunk of req) {size+=chunk.length;if(size>8192) throw new BrowserError(413,'Search request is too large');chunks.push(chunk);}
   try {return JSON.parse(Buffer.concat(chunks).toString('utf8'));} catch {throw new BrowserError(400,'Invalid JSON');}
 }
-const publicFields=['id','artist','style','category','categories','event','type','entryCount','venue','address','city','date','dateEnd','dateLabel','ticketUrl','ticketLinks','youtubeUrl','locationSource','locationApproximate','distanceMiles'];
+const publicFields=['id','artist','style','category','categories','event','type','entryCount','venue','address','city','date','dateEnd','dateLabel','startTime','timeZoneOffset','ticketUrl','ticketLinks','youtubeUrl','youtubeLinks','locationSource','locationApproximate','distanceMiles'];
 
 /** Browser searches share show selection rules without registering a messaging
  * user, opening SQLite, or retaining the visitor's location.
@@ -185,7 +185,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
       found=findFutureShows({shows,now,timeZone,signal});
       found={...found,matches:found.matches.filter(show=>show.date>=window.start && (!window.end || show.date<=window.end)),windowStart:window.start,windowEnd:window.end};
     } else found=await findNearbyShows({shows,origin,geocoder,now:window.start,timeZone,days:window.days,radiusMiles:config.radiusMiles,signal});
-    const displayShows=groupEventResults(found.matches);
+    const displayShows=mergeShowSlots(groupEventResults(found.matches));
     const result={view,rangeLabel:window.label,searchKind,artistQuery,artistRegistration:registration,shows:displayShows.map(show=>Object.fromEntries(publicFields.filter(key=>show[key]!==undefined).map(key=>[key,show[key]]))),total:displayShows.length,locationLabel:found.locationLabel||null,windowStart:found.windowStart,windowEnd:found.windowEnd||null,radiusMiles:config.radiusMiles,days:window.days,timeZone,excludedCount:found.excludedCount||0,source:{...sourceMeta,...(config.mode==='demo' && loaded.sample===true?{sample:true,label:'Fictional sample events'}:{}),...(config.mode==='demo' && (loaded.snapshotUpdatedAt || env.BROWSER_SNAPSHOT_UPDATED_AT)?{updatedAt:loaded.snapshotUpdatedAt || env.BROWSER_SNAPSHOT_UPDATED_AT}:{})},locationMethod:env.BROWSER_GEOCODER==='google'?'geocoding':'city-centers'};
     if (input.query!==undefined && searchKind==='location') {
       const parsed=parseSearchQuery(input.query);

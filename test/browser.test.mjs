@@ -93,7 +93,7 @@ test('festival threshold counts only entries inside the search window',async t=>
  ]);
  const {post}=await server(t,{source:{load:async()=>({shows:festivalShows})},geocoder:{resolve:async()=>({lat:32.78,lng:-96.8})}});
  const data=await (await post({view:'nearby',latitude:32.78,longitude:-96.8,timeZone:'America/Chicago'})).json();
- assert.equal(data.total,3);assert.ok(data.shows.every(show=>show.type!=='event'));
+ assert.equal(data.total,1);assert.equal(data.shows[0].type,'show-group');assert.equal(data.shows[0].entryCount,3);assert.match(data.shows[0].artist,/DJ 0.*DJ 1.*DJ 2/);
  const full=await (await post({view:'full',timeZone:'America/Chicago'})).json();
  assert.equal(full.total,1);assert.equal(full.shows[0].entryCount,4);
 });
@@ -126,4 +126,26 @@ test('city directory handles worldwide city/region names, US ZIPs, ambiguity, an
  await assert.rejects(geo.resolveCity('made-up Dallas TX'),error=>error.code==='NOT_FOUND');
  await assert.rejects(geo.resolveCity('New Jersey'),error=>error.code==='NOT_FOUND');
  const controller=new AbortController();controller.abort();await assert.rejects(geo.resolveCity('Dallas TX',{signal:controller.signal}),error=>error.name==='AbortError');
+});
+
+
+test('browser merges same-slot lineups after filtering and keeps other times and venues distinct', async t => {
+  const grouped=parseShows([[...header,'Style','Category'],
+    ['DJ One','Same Club','','Dallas, TX','https://example.com/one','Oct 9, 2026 - 8 PM','https://youtu.be/one','House','Nighttime'],
+    ['DJ Two','Same Club','','Dallas, TX','https://example.com/two','Oct 9, 2026 - 20:00','https://youtu.be/two','Techno','Afters'],
+    ['Later DJ','Same Club','','Dallas, TX','','Oct 9, 2026 - 11 PM','','Trance','Nighttime'],
+    ['Other Club DJ','Other Club','','Dallas, TX','','Oct 9, 2026 - 8 PM','','House','Nighttime'],
+  ]);
+  const {post}=await server(t,{source:{load:async()=>({shows:grouped})},catalog:{load:async()=>({artists:['DJ One','DJ Two'],promoters:[]}),ensureArtist(){throw Error('Known artists must not be added');}}});
+  const all=await (await post({view:'full'})).json();
+  assert.equal(all.total,3);
+  const merged=all.shows.find(show=>show.type==='show-group');
+  assert.equal(merged.artist,'DJ One, DJ Two');assert.equal(merged.startTime,'20:00:00');
+  assert.equal(merged.style,'House, Techno');assert.deepEqual(merged.categories,['Nighttime','Afters']);
+  assert.deepEqual(merged.ticketLinks.map(link=>link.url),['https://example.com/one','https://example.com/two']);
+  assert.deepEqual(merged.youtubeLinks.map(link=>link.url),['https://youtu.be/one','https://youtu.be/two']);
+  assert.equal(all.shows.at(-1).artist,'Later DJ');
+  const filtered=await (await post({view:'full',query:'artist: DJ Two'})).json();
+  assert.equal(filtered.total,1);assert.equal(filtered.shows[0].artist,'DJ Two');
+  assert.equal(filtered.shows[0].type,undefined,'Filtering does not expose the other merged performers');
 });

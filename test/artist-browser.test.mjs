@@ -8,6 +8,10 @@ import {LocationError} from '../src/locations.mjs';
 const headers=['Artist','Event','Location','City','Address','Ticket Link','Show Time','YouTube (Most Popular Song)'];
 const row=(artist,date='2026-10-09',event='',city='Dallas, TX')=>[artist,event,'Venue',city,'','https://tickets.example/event',date,'https://youtu.be/artist'];
 const records=parseShows([headers,row('Tiësto'),row('Other DJ'),row('Tiësto','2027-01-01'),row('Paris'),row('Steve Angello')]);
+function assertSharedShowSlot(result) {
+ assert.equal(result.total,1);assert.equal(result.shows.length,1);assert.equal(result.shows[0].type,'show-group');
+ assert.deepEqual(result.shows[0].artist.split(', ').sort(),['Other DJ','Paris','Steve Angello','Tiësto']);
+}
 async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensureArtist,loadCatalog,loadSource,verifyArtist}={}) {
  const writes=[],verifications=[];
  const catalog={load:loadCatalog||(async()=>({artists,promoters:['SILO Dallas'],canAdd:true})),ensureArtist:ensureArtist||(async(name)=>{writes.push(name);artists.push(name);return{name,added:true};})};
@@ -123,7 +127,7 @@ test('event source failure does not start a catalog request or expose provider d
 test('optional catalog outage keeps resolvable cities and feed artist searches usable without writes',async t=>{
  const {post,writes}=await setup(t,{loadCatalog:async()=>{throw new Error('SECRET catalog failure');}});
  const cityResponse=await post({query:'Dallas'});assert.equal(cityResponse.status,200);
- const city=await cityResponse.json();assert.equal(city.searchKind,'location');assert.equal(city.locationLabel,'Dallas');assert.equal(city.total,4);
+ const city=await cityResponse.json();assert.equal(city.searchKind,'location');assert.equal(city.locationLabel,'Dallas');assertSharedShowSlot(city);
  const exactResponse=await post({query:'STEVE ANGELLO'});assert.equal(exactResponse.status,200);
  const exact=await exactResponse.json();assert.equal(exact.searchKind,'artist');assert.equal(exact.artistQuery,'Steve Angello');assert.equal(exact.shows.length,1);
  const partialResponse=await post({query:'angello'});assert.equal(partialResponse.status,200);
@@ -169,8 +173,9 @@ test('explicit locations and GPS searches do not depend on or call the artist ca
  const {post,writes}=await setup(t,{loadCatalog:async()=>{catalogCalls++;throw new Error('Catalog should not be called');}});
  const locationResponse=await post({query:'location: Dallas',location:'Paris, France'});assert.equal(locationResponse.status,200);
  const location=await locationResponse.json();assert.equal(location.searchKind,'location');assert.equal(location.locationInput,'Dallas');
+ assertSharedShowSlot(location);
  const gpsResponse=await post({latitude:32.78,longitude:-96.8});assert.equal(gpsResponse.status,200);
- assert.equal((await gpsResponse.json()).total,4);
+ assertSharedShowSlot(await gpsResponse.json());
  assert.equal(catalogCalls,0);assert.deepEqual(writes,[]);
 });
 

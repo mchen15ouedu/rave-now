@@ -130,6 +130,76 @@ test('a grouped event renders one festival title, date range, ticket choices and
  assert.ok(links.every(link=>link.attributes['aria-label'].includes('Example Festival')));
 });
 
+
+test('a shared show card keeps performer names, styles, categories and every safe labeled link',async()=>{
+ const group={
+  type:'show-group',artist:'Alpha, Beta, Gamma',style:'House · Techno',categories:['Nighttime','Afters'],event:'Room A · Room B',date:'2026-10-09',venue:'Club',city:'Dallas',
+  ticketUrl:'https://tickets.example/legacy',
+  ticketLinks:[
+   {url:'https://tickets.example/',label:'Alpha tickets'},
+   {url:'https://tickets.example',label:'Duplicate tickets'},
+   {url:'https://tickets.example/beta',label:'Beta tickets'},
+   {url:'javascript:alert(1)',label:'Unsafe ticket'},
+   {url:'https://user:password@tickets.example/private',label:'Credential ticket'},null,'invalid',
+  ],
+  youtubeUrl:'https://youtu.be/legacy',
+  youtubeLinks:[
+   {url:'https://youtu.be/shared',label:'YouTube · Alpha'},
+   {url:'https://youtu.be/shared',label:'YouTube · Beta'},
+   {url:'https://youtu.be/shared',label:'YouTube · Alpha'},
+   {url:'https://www.youtube.com/results?search_query=Gamma',label:'YouTube search · <img src=x onerror=alert(1)>'},
+   {url:'data:text/html,unsafe',label:'Unsafe video'},
+   {url:'https://user:password@youtube.com/private',label:'Credential video'},null,'invalid',
+  ],
+ };
+ const {nodes}=await page({fetchResult:()=>response({shows:[group],locationLabel:'Dallas',days:7})});
+ submit(nodes,'Dallas TX');await tick();
+ const cards=nodes.get('show-grid').children;assert.equal(cards.length,1);
+ const card=cards[0];assert.equal(card.children[0].textContent,group.artist);assert.equal(card.children[1].textContent,group.style);assert.equal(card.children[2].className,'show-date');
+ assert.ok(card.children.some(node=>node.textContent===group.event));
+ assert.deepEqual(card.children.at(-1).children.map(node=>node.textContent),group.categories);
+ const links=descendants(card).filter(node=>node.tag==='a');
+ assert.deepEqual(links.map(node=>node.textContent),['Alpha tickets','Beta tickets','YouTube · Alpha','YouTube · Beta','YouTube search · <img src=x onerror=alert(1)>']);
+ assert.deepEqual(links.map(node=>node.href),['https://tickets.example/','https://tickets.example/beta','https://youtu.be/shared','https://youtu.be/shared','https://www.youtube.com/results?search_query=Gamma']);
+ assert.ok(links.every(node=>node.target==='_blank'&&node.rel==='noopener noreferrer'&&node.attributes['aria-label'].includes(group.artist)));
+ assert.ok(links.every(node=>node.children.length===0));
+});
+
+test('a shared show card collapses many ticket choices while leaving every performer video visible',async()=>{
+ const tickets=Array.from({length:6},(_,i)=>({url:'https://tickets.example/artist/'+i,label:'Tickets · Artist '+i}));
+ const videos=Array.from({length:6},(_,i)=>({url:'https://www.youtube.com/results?search_query=Artist+'+i,label:'YouTube search · Artist '+i}));
+ const group={type:'show-group',artist:'Artists 0–5',date:'2026-10-09',ticketLinks:[...tickets,tickets[0],{url:'javascript:bad',label:'Bad'}],youtubeLinks:videos};
+ const {nodes}=await page({fetchResult:()=>response({shows:[group],locationLabel:'Dallas',days:7})});
+ submit(nodes,'Dallas TX');await tick();
+ const card=nodes.get('show-grid').children[0];
+ const visible=card.children.filter(node=>node.tag==='div').flatMap(descendants).filter(node=>node.tag==='a');
+ assert.deepEqual(visible.map(node=>node.textContent),[tickets[0].label,...videos.map(video=>video.label)]);
+ const options=card.children.find(node=>node.tag==='details');assert.ok(options);assert.equal(options.open,undefined);
+ assert.deepEqual(descendants(options).filter(node=>node.tag==='a').map(node=>node.href),tickets.slice(1).map(ticket=>ticket.url));
+ assert.equal(descendants(card).filter(node=>node.tag==='a').length,tickets.length+videos.length);
+});
+
+
+test('single-date results display distinct explicit show times without inventing clocks for date-only or multi-day events',async()=>{
+ const shows=[
+  {artist:'Early set',date:'2026-10-09',startTime:'20:00:00',timeZoneOffset:'CDT'},
+  {artist:'Late set',date:'2026-10-09',startTime:'22:30:00',timeZoneOffset:'-05:00'},
+  {artist:'After midnight',date:'2026-10-10',startTime:'00:15:30'},
+  {artist:'Date only',date:'2026-10-09'},
+  {type:'event',event:'Weekend festival',date:'2026-10-09',dateEnd:'2026-10-11',startTime:'20:00:00',timeZoneOffset:'CDT'},
+  {artist:'Invalid clock',date:'2026-10-09',startTime:'25:00:00',timeZoneOffset:'CDT'},
+ ];
+ const {nodes}=await page({fetchResult:()=>response({shows,locationLabel:'Dallas',days:7})});
+ submit(nodes,'Dallas TX');await tick();
+ const cards=nodes.get('show-grid').children;assert.equal(cards.length,shows.length);
+ const dates=cards.map(card=>descendants(card).find(node=>node.tag==='time').textContent);
+ assert.match(dates[0],/Fri, Oct 9, 2026 · 8:00 PM CDT$/);
+ assert.match(dates[1],/Fri, Oct 9, 2026 · 10:30 PM UTC-05:00$/);
+ assert.match(dates[2],/Sat, Oct 10, 2026 · 12:15:30 AM$/);
+ assert.doesNotMatch(dates[3],/AM|PM/);assert.doesNotMatch(dates[4],/AM|PM/);assert.doesNotMatch(dates[5],/AM|PM/);
+ assert.match(dates[4],/9/);assert.match(dates[4],/11/);
+});
+
 test('large event ticket lists stay collapsed while preserving every safe option',async()=>{
  const tickets=Array.from({length:100},(_,i)=>({url:'https://tickets.example/festival?option='+i,label:'Ticket option '+i}));
  const festival={type:'event',event:'Example Festival',artist:'Example Festival',date:'2026-10-09',ticketLinks:[...tickets,{url:'javascript:bad',label:'Bad link'}],youtubeUrl:'https://www.youtube.com/results?search_query=Example+Festival'};

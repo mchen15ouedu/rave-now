@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseShowDate, parseShows, calendarDate, haversineMiles, findNearbyShows, findFutureShows } from '../src/shows.mjs';
+import { parseShowDate, parseShowClock, parseShows, calendarDate, haversineMiles, findNearbyShows, findFutureShows } from '../src/shows.mjs';
 import { DemoLocationProvider, LocationError } from '../src/locations.mjs';
 
 const headers = ['Artist', 'Location', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)'];
@@ -243,4 +243,36 @@ test('aborted searches propagate cancellation', async () => {
   const controller = new AbortController();
   controller.abort();
   await assert.rejects(findNearbyShows({ shows: [], origin: 'Dallas TX', geocoder: new DemoLocationProvider(), signal: controller.signal }), { name: 'AbortError' });
+});
+
+
+test('listed show clocks preserve local time, meridiem and explicit zones without inventing missing times', () => {
+  for (const [value, startTime, timeZoneOffset] of [
+    ['Fri, Oct 9, 2026 - 8:00 PM', '20:00:00', null],
+    ['Oct 9, 2026 at 20:00', '20:00:00', null],
+    ['Oct 9, 2026 - 12 AM CDT', '00:00:00', 'CDT'],
+    ['Oct 9, 2026 - 12:30:15 PM', '12:30:15', null],
+    ['2026-10-09T20:00:00-0500', '20:00:00', '-05:00'],
+    ['2026-10-09 00:00Z', '00:00:00', '+00:00'],
+    [25569.75, '18:00:00', null],
+    [new Date('2026-10-09T20:00:00Z'), '20:00:00', '+00:00'],
+  ]) assert.deepEqual(parseShowClock(value), {startTime, timeZoneOffset, timeSpecified:true}, String(value));
+  for (const value of ['Fri, Oct 9, 2026', '2026-10-09', 25569]) {
+    assert.deepEqual(parseShowClock(value), {startTime:null, timeZoneOffset:null, timeSpecified:false});
+  }
+  for (const value of ['Oct 9, 2026 - 25:00', 'Oct 9, 2026 - 0 PM', '2026-10-09T20:70', '2026-10-09T20:00+04:99', '2026-10-09T20:00+15:00', '2026-10-09T20:00+14:01']) {
+    assert.deepEqual(parseShowClock(value), {startTime:null, timeZoneOffset:null, timeSpecified:true});
+  }
+  const [show] = parseShows([headers, row('Clock DJ', 'Fri, Oct 9, 2026 - 8:00 PM')]);
+  assert.equal(show.date,'2026-10-09');assert.equal(show.startTime,'20:00:00');
+  assert.equal(show.dateLabel,'Fri, Oct 9, 2026 - 8:00 PM');
+});
+
+test('upcoming selection orders listed clocks within the same day before date-only entries', async () => {
+  const shows = parseShows([headers,
+    row('Later', 'Oct 9, 2026 - 11 PM'), row('Date only', 'Oct 9, 2026'), row('Earlier', 'Oct 9, 2026 - 8 PM'),
+  ]);
+  assert.deepEqual(findFutureShows({shows,now:'2026-10-08'}).matches.map(show=>show.artist),['Earlier','Later','Date only']);
+  const nearby=await findNearbyShows({shows,origin:'Dallas TX',geocoder:new DemoLocationProvider(),now:'2026-10-08'});
+  assert.deepEqual(nearby.matches.map(show=>show.artist),['Earlier','Later','Date only']);
 });

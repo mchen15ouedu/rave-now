@@ -45,7 +45,7 @@ test('fictional sample feed returns NYC and Brooklyn shows in the selected week 
  const app=createHostedApp({env:{},browser:{clock:()=>'2026-10-06',source:{load:async()=>({shows:parseShows(sample.rows),snapshotUpdatedAt:sample.metadata.updatedAt,sample:true})}}});
  const result=await app.browserApp.search({query:'New York',timeZone:'America/Chicago'});
  assert.equal(result.windowStart,'2026-10-06');assert.equal(result.windowEnd,'2026-10-12');
- assert.deepEqual(result.shows.map(show=>show.artist),['Sample Metro','Sample Tidal','Sample Pulse']);
+ assert.deepEqual(result.shows.map(show=>show.artist),['Sample Tidal','Sample Metro','Sample Pulse']);
  assert.deepEqual(result.shows.map(show=>show.date),['2026-10-09','2026-10-09','2026-10-10']);
  assert.ok(result.shows.every(show=>show.distanceMiles<80));
  assert.ok(result.shows.some(show=>show.ticketUrl));

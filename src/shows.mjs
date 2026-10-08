@@ -44,9 +44,49 @@ export function parseShowDate(value) {
   if (!english) return null;
   // Optional displayed show time is retained in dateLabel, but the window uses the local calendar date.
   const tail = english[4].trim();
-  if (tail && !/^(?:(?:[-–—@]|at)\s*)?\d{1,2}(?::\d{2})?\s*(?:[AP]M)?(?:\s+[A-Z]{2,5})?$/i.test(tail)) return null;
+  if (tail && !/^(?:(?:[-–—@]|at)\s*)?\d{1,2}(?::\d{2}(?::\d{2})?)?\s*(?:[AP]M)?(?:\s+[A-Z]{2,5})?$/i.test(tail)) return null;
   const month = MONTHS.get(english[1].toLowerCase());
   return month ? isoDate(Number(english[3]), month, Number(english[2])) : null;
+}
+
+/** Keep a listed clock distinct from date-only rows without converting local dates. */
+export function parseShowClock(value) {
+  const absent = { startTime: null, timeZoneOffset: null, timeSpecified: false };
+  const clock = (hours, minutes = 0, seconds = 0, timeZoneOffset = null) => ({
+    startTime: [hours, minutes, seconds].map(part => String(part).padStart(2, '0')).join(':'),
+    timeZoneOffset, timeSpecified: true,
+  });
+  if (typeof value === 'number') {
+    if (!parseShowDate(value) || Number.isInteger(value)) return absent;
+    const seconds = Math.min(86399, Math.round((value - Math.floor(value)) * 86400));
+    return clock(Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60);
+  }
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? clock(value.getUTCHours(), value.getUTCMinutes(), value.getUTCSeconds(), '+00:00') : absent;
+  }
+  const text = clean(value);
+  const iso = text.match(/^\d{4}-\d{2}-\d{2}(?:[T ](.*))?$/);
+  const english = text.match(/^(?:(?:Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)\s*,?\s+)?[a-z]+\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s+\d{4}(.*)$/i);
+  const tail = (iso ? iso[1] : english?.[1])?.trim();
+  if (!tail) return absent;
+  const invalid = { ...absent, timeSpecified: true };
+  const parts = iso
+    ? tail.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i)
+    : tail.match(/^(?:(?:[-–—@]|at)\s*)?(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?\s*([AP]M)?(?:\s+([A-Z]{2,5}))?$/i);
+  if (!parts) return invalid;
+  let hours = Number(parts[1]);
+  const minutes = Number(parts[2] || 0), seconds = Number(parts[3] || 0);
+  const meridiem = iso ? null : parts[4]?.toUpperCase();
+  if (minutes > 59 || seconds > 59 || hours > (meridiem ? 12 : 23) || (meridiem && hours < 1)) return invalid;
+  if (meridiem) hours = hours % 12 + (meridiem === 'PM' ? 12 : 0);
+  let zone = iso ? parts[4]?.toUpperCase() : parts[5]?.toUpperCase();
+  if (zone === 'Z' || zone === 'UTC' || zone === 'GMT') zone = '+00:00';
+  else if (zone && /^[+-]/.test(zone)) {
+    zone = zone.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2');
+    if (Number(zone.slice(1, 3)) > 14 || Number(zone.slice(4)) > 59 || (Number(zone.slice(1, 3)) === 14 && Number(zone.slice(4)) !== 0)) return invalid;
+    if (zone === '-00:00') zone = '+00:00';
+  }
+  return clock(hours, minutes, seconds, zone || null);
 }
 
 function usableLocation(value) {
@@ -126,6 +166,7 @@ export function parseShows(rows) {
       youtubeUrl: eventOnly ? `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}` : safeHttpUrl(row[indexes.youtubemostpopularsong]),
       date,
       dateLabel: clean(dateValue),
+      ...parseShowClock(dateValue),
       locationQuery,
       locationSource,
       locationApproximate: locationSource === 'city',
@@ -165,7 +206,7 @@ export function findFutureShows({ shows, now = new Date(), timeZone = 'America/C
   signal?.throwIfAborted();
   const windowStart = calendarDate(now, timeZone);
   const matches = shows.filter(show => parseShowDate(show.date) && show.date >= windowStart);
-  matches.sort((a,b) => a.date.localeCompare(b.date) || a.artist.localeCompare(b.artist) || a.id.localeCompare(b.id));
+  matches.sort((a,b) => a.date.localeCompare(b.date) || (a.startTime || '99:99:99').localeCompare(b.startTime || '99:99:99') || a.artist.localeCompare(b.artist) || a.id.localeCompare(b.id));
   return { matches, windowStart };
 }
 
@@ -222,6 +263,6 @@ export async function findNearbyShows({ shows, origin, geocoder, now = new Date(
       locationApproximate: Boolean(show.locationApproximate || destination.approximate),
     });
   }
-  matches.sort((a, b) => a.date.localeCompare(b.date) || a.distanceMiles - b.distanceMiles || a.artist.localeCompare(b.artist));
+  matches.sort((a, b) => a.date.localeCompare(b.date) || (a.startTime || '99:99:99').localeCompare(b.startTime || '99:99:99') || a.distanceMiles - b.distanceMiles || a.artist.localeCompare(b.artist));
   return { matches, excludedCount, locationLabel: point.label || (typeof origin === 'string' ? origin : 'your shared location'), windowStart, windowEnd };
 }

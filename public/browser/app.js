@@ -21,6 +21,30 @@ function httpUrl(value) {
   } catch { return null; }
 }
 
+function safeLinkPairs(pairs, preserveLabels = false) {
+  const seen = new Set();
+  return pairs.flatMap(([value, label]) => {
+    const url = httpUrl(value);
+    const key = preserveLabels ? `${url}\n${label}` : url;
+    if (!url || seen.has(key)) return [];
+    seen.add(key);
+    return [[url, label]];
+  });
+}
+
+function showClock(show) {
+  if (typeof show.startTime !== 'string') return '';
+  const time = /^([01]\d|2[0-3]):([0-5]\d):([0-5]\d)$/.exec(show.startTime);
+  if (!time) return '';
+  const hour = Number(time[1]);
+  const seconds = time[3] === '00' ? '' : `:${time[3]}`;
+  const clock = `${hour % 12 || 12}:${time[2]}${seconds} ${hour < 12 ? 'AM' : 'PM'}`;
+  const zone = typeof show.timeZoneOffset === 'string' ? show.timeZoneOffset.trim() : '';
+  if (/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(zone)) return `${clock} UTC${zone}`;
+  if (/^[A-Za-z]{2,10}$/.test(zone)) return `${clock} ${zone.toUpperCase()}`;
+  return clock;
+}
+
 function showDate(show) {
   if (typeof show.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(show.date)) {
     const date = new Date(`${show.date}T12:00:00Z`);
@@ -32,7 +56,8 @@ function showDate(show) {
         const end = new Date(`${show.dateEnd}T12:00:00Z`);
         if (Number.isFinite(end.getTime())) return formatter.formatRange(date, end);
       }
-      return formatter.format(date);
+      const clock = showClock(show);
+      return `${formatter.format(date)}${clock ? ` · ${clock}` : ''}`;
     }
   }
   return String(show.dateLabel || 'Date to be confirmed');
@@ -78,9 +103,12 @@ function showCard(show) {
     youtubeUrl = search.href;
     youtubeLabel = 'YouTube search';
   }
-  const ticketLinks = show.type === 'event' && Array.isArray(show.ticketLinks) && show.ticketLinks.length
-    ? show.ticketLinks.filter((link) => link && typeof link === 'object').map((link) => [link.url, link.label || 'Tickets']) : [[show.ticketUrl, 'Tickets']];
-  const safeTickets = ticketLinks.filter(([value]) => httpUrl(value));
+  const ticketLinks = ['event', 'show-group'].includes(show.type) && Array.isArray(show.ticketLinks) && show.ticketLinks.length
+    ? show.ticketLinks.filter((link) => link && typeof link === 'object').map((link) => [link.url, typeof link.label === 'string' && link.label.trim() ? link.label.trim() : 'Tickets']) : [[show.ticketUrl, 'Tickets']];
+  const safeTickets = safeLinkPairs(ticketLinks);
+  const youtubeLinks = Array.isArray(show.youtubeLinks) && show.youtubeLinks.length
+    ? show.youtubeLinks.filter((link) => link && typeof link === 'object').map((link) => [link.url, typeof link.label === 'string' && link.label.trim() ? link.label.trim() : youtubeLabel]) : [[youtubeUrl, youtubeLabel]];
+  const safeVideos = safeLinkPairs(youtubeLinks, true);
   const extraTickets = safeTickets.length > 3 ? safeTickets.slice(1) : [];
   const visibleTickets = extraTickets.length ? safeTickets.slice(0, 1) : safeTickets;
   function showLink(value, label) {
@@ -93,7 +121,7 @@ function showCard(show) {
     link.setAttribute('aria-label', `${label} for ${title}`);
     return link;
   }
-  for (const [value, label] of [...visibleTickets, [youtubeUrl, youtubeLabel]]) {
+  for (const [value, label] of [...visibleTickets, ...safeVideos]) {
     const link = showLink(value, label);
     if (link) links.append(link);
   }

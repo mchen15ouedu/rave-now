@@ -131,6 +131,7 @@ function eventResult(entries) {
     date: dates[0],
     dateEnd: dates.at(-1),
     dateLabel: displayRange(dates[0], dates.at(-1)),
+    ...uniformEventClock(entries),
     entryCount: entries.filter(({ show }) => show.type !== 'event').length,
     ticketUrl: ticketLinks[0]?.url ?? null,
     ticketLinks,
@@ -211,5 +212,194 @@ export function groupEventResults(matches) {
     if (aDate == null) return bDate == null ? 0 : 1;
     if (bDate == null) return -1;
     return aDate - bDate;
+  });
+}
+
+function slotLocationKey(value) {
+  return normalized(value).replace(/[.,’'\x60]/gu, '').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/gu, ' ').trim();
+}
+
+function slotClock(show) {
+  if (show.startTime == null || show.startTime === '') {
+    return show.timeSpecified ? null : { time: null, offset: null };
+  }
+  if (typeof show.startTime !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(show.startTime)) return null;
+  const offset = clean(show.timeZoneOffset).toUpperCase() || null;
+  return { time: show.startTime.length === 5 ? show.startTime + ':00' : show.startTime, offset };
+}
+
+function uniformEventClock(entries) {
+  const clocks = entries.map(({ show }) => slotClock(show));
+  const first = clocks[0];
+  if (!first?.time || clocks.some(clock => !clock || clock.time !== first.time || clock.offset !== first.offset)) {
+    return { startTime: null, timeZoneOffset: null, timeSpecified: entries.some(({ show }) => Boolean(show.timeSpecified || show.startTime)) };
+  }
+  return { startTime: first.time, timeZoneOffset: first.offset, timeSpecified: true };
+}
+
+function slotSite(show) {
+  const city = usableLocation(show.city);
+  const cityKey = city ? slotLocationKey(city) || null : null;
+  const venue = usableLocation(show.venue);
+  const venueKey = venue && slotLocationKey(venue) !== cityKey ? slotLocationKey(venue) : null;
+  const address = usableLocation(show.address);
+  let addressKey = address && show.locationSource !== 'city' ? slotLocationKey(address) : null;
+  if (addressKey) {
+    const withoutCity = cityKey ? addressKey.replace(cityKey, '').trim() : addressKey;
+    // City/ZIP centers and coordinates do not establish a physical street site.
+    if (!withoutCity || /^[\d\s-]+$/u.test(withoutCity) || !/\p{L}/u.test(addressKey) ||
+        !/^\d[\p{L}\d\-/]*\s+\p{L}/u.test(addressKey) && !/\b(?:street|st|road|rd|avenue|ave|boulevard|blvd|drive|dr|lane|ln|way|court|ct|terrace|place|pl|rue|calle|weg|strasse|straße|via|piazza)\b/iu.test(addressKey)) addressKey = null;
+  }
+  if (!cityKey && !addressKey) return null;
+  return venueKey || addressKey ? { city: cityKey, venue: venueKey, address: addressKey } : null;
+}
+
+function slotResult(entries) {
+  const first = entries.reduce((a, b) => a.index < b.index ? a : b);
+  const nearest = entries.reduce((a, b) => {
+    const aDistance = Number.isFinite(a.show.distanceMiles) ? a.show.distanceMiles : Infinity;
+    const bDistance = Number.isFinite(b.show.distanceMiles) ? b.show.distanceMiles : Infinity;
+    return bDistance < aDistance ? b : a;
+  });
+  const standalone = new Set(entries.map(({ show }) => clean(show.artist)).filter(name => !name.includes(',')).map(normalized));
+  const namesFor = show => {
+    if (show.type === 'show-group' && Array.isArray(show.artists)) return show.artists.map(clean).filter(Boolean);
+    const name = clean(show.artist), pieces = name.split(',').map(clean).filter(Boolean);
+    // An Artist cell may itself contain a comma. Only unpack a roster when its
+    // components are independently listed here, or this is our own prior group.
+    return pieces.length > 1 && (show.type === 'show-group' || pieces.every(piece => standalone.has(normalized(piece)))) ? pieces : name ? [name] : [];
+  };
+  const artists = new Map(), styles = new Map(), categories = new Map(), events = new Map();
+  const tickets = new Map(), videos = new Map(), extraVideos = new Map();
+  const remember = (map, value) => { const name = clean(value); if (name && !map.has(normalized(name))) map.set(normalized(name), name); };
+  for (const { show } of entries) {
+    const names = namesFor(show);
+    for (const name of names) { remember(artists, name); if (!videos.has(normalized(name))) videos.set(normalized(name), new Map()); }
+    for (const style of clean(show.style).split(/[,;]/u)) remember(styles, style);
+    for (const category of [show.category, ...(Array.isArray(show.categories) ? show.categories : [])]) remember(categories, category);
+    const event = usableEventName(show.event);
+    if (event && !names.some(name => normalized(name) === normalized(event)) && normalized(event) !== normalized(show.artist)) remember(events, event);
+    const ticketLabel = 'Tickets · ' + clean(show.artist);
+    for (const link of [...(Array.isArray(show.ticketLinks) ? show.ticketLinks : []), { url: show.ticketUrl, label: ticketLabel }]) {
+      const url = safeHttpUrl(link?.url);
+      if (url && !tickets.has(ticketIdentity(url))) tickets.set(ticketIdentity(url), { url, label: clean(link?.label) || ticketLabel });
+    }
+    const scalar = show.type === 'show-group' && Array.isArray(show.youtubeLinks) && show.youtubeLinks.some(link => safeHttpUrl(link?.url)) ? null : safeHttpUrl(show.youtubeUrl);
+    if (scalar) for (const name of names) videos.get(normalized(name)).set(ticketIdentity(scalar), scalar);
+    for (const link of Array.isArray(show.youtubeLinks) ? show.youtubeLinks : []) {
+      const url = safeHttpUrl(link?.url);
+      if (!url) continue;
+      const label = clean(link.label);
+      const name = names.find(value => label.endsWith(' · ' + value));
+      if (name) videos.get(normalized(name)).set(ticketIdentity(url), url);
+      else extraVideos.set(JSON.stringify([ticketIdentity(url), label]), { url, label: label || 'YouTube' });
+    }
+  }
+  const youtubeLinks = [];
+  for (const [key, name] of artists) {
+    const urls = videos.get(key);
+    if (urls.size) for (const url of urls.values()) {
+      const parsed = new URL(url);
+      const label = parsed.pathname === '/results' && parsed.searchParams.has('search_query') ? 'YouTube search · ' : 'YouTube · ';
+      youtubeLinks.push({ url, label: label + name });
+    }
+    else youtubeLinks.push({ url: 'https://www.youtube.com/results?search_query=' + encodeURIComponent(name), label: 'YouTube search · ' + name });
+  }
+  for (const link of extraVideos.values()) if (!youtubeLinks.some(value => value.url === link.url && value.label === link.label)) youtubeLinks.push(link);
+  const clock = slotClock(first.show);
+  return {
+    ...nearest.show,
+    id: first.show.id ?? 'slot-' + first.index,
+    type: 'show-group',
+    artist: [...artists.values()].join(', '),
+    artists: [...artists.values()],
+    style: [...styles.values()].join(', '),
+    category: categories.size === 1 ? [...categories.values()][0] : '',
+    categories: [...categories.values()],
+    event: [...events.values()].filter(event => !artists.has(normalized(event))).join(', '),
+    date: first.show.date,
+    dateLabel: first.show.dateLabel,
+    startTime: clock.time,
+    timeZoneOffset: clock.offset,
+    timeSpecified: Boolean(clock.time),
+    entryCount: entries.reduce((total, { show }) => total + (Number.isInteger(show.entryCount) && show.entryCount >= 0 ? show.entryCount : show.type === 'event' ? 0 : 1), 0),
+    ticketUrl: [...tickets.values()][0]?.url ?? null,
+    ticketLinks: [...tickets.values()],
+    youtubeUrl: youtubeLinks[0]?.url ?? null,
+    youtubeLinks,
+  };
+}
+
+/** Browser-only consolidation after named festivals have already been counted.
+ * A slot needs the same calendar day, explicit clock/offset (or both date-only),
+ * and a known physical site. Ambiguous partial locations remain individual.
+ * Multi-day event cards keep their date ranges. A one-day event contributes
+ * only its existing headline, never an inferred performer roster.
+ */
+export function mergeShowSlots(matches) {
+  if (!Array.isArray(matches)) throw new TypeError('matches must be an array.');
+  const slots = new Map();
+  matches.forEach((show, index) => {
+    if (!show || typeof show !== 'object' || show.type === 'event' && show.dateEnd && show.dateEnd !== show.date || dateEpoch(show.date) == null) return;
+    const clock = slotClock(show), site = slotSite(show);
+    if (!clock || !site) return;
+    const key = JSON.stringify([show.date, clock.time, clock.offset]);
+    if (!slots.has(key)) slots.set(key, []);
+    slots.get(key).push({ show, index, site });
+  });
+  const replacements = new Map(), hidden = new Set();
+  const locatedSlots = [];
+  for (const entries of slots.values()) {
+    const addressCities = new Map(), cities = new Map();
+    for (const { site } of entries) {
+      if (!site.city || !site.address) continue;
+      if (!addressCities.has(site.address)) addressCities.set(site.address, new Set());
+      addressCities.get(site.address).add(site.city);
+    }
+    for (const entry of entries) {
+      let city = entry.site.city;
+      if (!city) {
+        const known = addressCities.get(entry.site.address) || new Set();
+        if (known.size > 1) continue;
+        city = known.size === 1 ? [...known][0] : '';
+      }
+      if (!cities.has(city)) cities.set(city, []);
+      cities.get(city).push(entry);
+    }
+    locatedSlots.push(...cities.values());
+  }
+  for (const entries of locatedSlots) {
+    const byVenue = new Map(), byAddress = new Map(), groups = new Map();
+    for (const { site } of entries) {
+      if (!site.venue || !site.address) continue;
+      const key = JSON.stringify([site.venue, site.address]);
+      if (!byVenue.has(site.venue)) byVenue.set(site.venue, new Set());
+      if (!byAddress.has(site.address)) byAddress.set(site.address, new Set());
+      byVenue.get(site.venue).add(key); byAddress.get(site.address).add(key);
+    }
+    for (const entry of entries) {
+      const { site } = entry;
+      let key;
+      if (site.venue && site.address) key = JSON.stringify([site.venue, site.address]);
+      else {
+        const candidates = (site.venue ? byVenue.get(site.venue) : byAddress.get(site.address)) || new Set();
+        key = candidates.size === 1 ? [...candidates][0] : candidates.size > 1 ? 'ambiguous:' + entry.index : JSON.stringify([site.venue, site.address]);
+      }
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
+    }
+    for (const group of groups.values()) {
+      if (group.length < 2) continue;
+      const first = group.reduce((a, b) => a.index < b.index ? a : b);
+      replacements.set(first.index, slotResult(group));
+      for (const { index } of group) if (index !== first.index) hidden.add(index);
+    }
+  }
+  const results = matches.flatMap((show, index) => hidden.has(index) ? [] : [replacements.get(index) ?? show]);
+  return results.sort((a, b) => {
+    const aDate = dateEpoch(a?.date), bDate = dateEpoch(b?.date);
+    if (aDate == null) return bDate == null ? 0 : 1;
+    if (bDate == null) return -1;
+    return aDate - bDate || (slotClock(a)?.time ?? '99:99:99').localeCompare(slotClock(b)?.time ?? '99:99:99');
   });
 }
