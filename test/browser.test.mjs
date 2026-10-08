@@ -22,15 +22,17 @@ async function server(t,browser={}) {
  return {app,url,post};
 }
 
-test('browser returns tracker music styles on artist and grouped festival results', async t => {
- const styled = parseShows([[...header, 'Event', 'Style'],
-  ...Array.from({length:4},(_,i)=>['DJ '+i,'Festival grounds','','Dallas, TX','https://example.com/festival','2026-10-09','','Example Festival',i%2?'Techno':'House']),
-  ['Independent DJ','Club','','Dallas, TX','','2026-10-10','','','Trance'],
+test('browser returns tracker styles and categories on artist and grouped festival results', async t => {
+ const styled = parseShows([[...header, 'Event', 'Style', 'Category'],
+  ...Array.from({length:4},(_,i)=>['DJ '+i,'Festival grounds','','Dallas, TX','https://example.com/festival','2026-10-09','','Example Festival',i%2?'Techno':'House',i%2?'Daytime':'Festival']),
+  ['Independent DJ','Club','','Dallas, TX','','2026-10-10','','','Trance','Nighttime'],
  ]);
  const {post}=await server(t,{source:{load:async()=>({shows:styled})}});
  const res=await post({view:'full',timeZone:'America/Chicago'}),data=await res.json();
  assert.equal(res.status,200);
  assert.deepEqual(data.shows.map(show=>[show.artist,show.style]),[['Example Festival','House, Techno'],['Independent DJ','Trance']]);
+ assert.deepEqual(data.shows[0].categories,['Festival','Daytime']);
+ assert.equal(data.shows[1].category,'Nighttime');
 });
 
 test('browser FULL needs no location, includes every future show, and creates no messaging user store',async t=>{

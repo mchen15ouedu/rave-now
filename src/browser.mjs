@@ -42,7 +42,7 @@ async function jsonBody(req) {
   for await (const chunk of req) {size+=chunk.length;if(size>8192) throw new BrowserError(413,'Search request is too large');chunks.push(chunk);}
   try {return JSON.parse(Buffer.concat(chunks).toString('utf8'));} catch {throw new BrowserError(400,'Invalid JSON');}
 }
-const publicFields=['id','artist','style','event','type','entryCount','venue','address','city','date','dateEnd','dateLabel','ticketUrl','ticketLinks','youtubeUrl','locationSource','locationApproximate','distanceMiles'];
+const publicFields=['id','artist','style','category','categories','event','type','entryCount','venue','address','city','date','dateEnd','dateLabel','ticketUrl','ticketLinks','youtubeUrl','locationSource','locationApproximate','distanceMiles'];
 
 /** Browser searches share show selection rules without registering a messaging
  * user, opening SQLite, or retaining the visitor's location.

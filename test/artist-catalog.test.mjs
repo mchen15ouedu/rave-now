@@ -13,20 +13,26 @@ const unavailable = error => error instanceof CatalogError && error.code === 'UN
 const showHeaders = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)'];
 const showRow = ['Steve Angello', 'Test Festival', 'Venue', 'Dallas, TX', '', 'https://tickets.example/event', 'Fri, Oct 9, 2026', 'https://youtu.be/artist'];
 
-test('live bridge preserves optional Style through catalog validation and parsing, excluding private columns', async () => {
-  const headers = ['Style', ...showHeaders, 'Internal Notes'];
-  const fixture = await bridgeFixture({ showRows: [headers, ['  House, Techno  ', ...showRow, 'private notes']] });
+test('live bridge preserves optional Style and Category through validation and parsing, excluding private columns', async () => {
+  const headers = ['Category', 'Style', ...showHeaders, 'Internal Notes'];
+  const fixture = await bridgeFixture({ showRows: [headers, ['  Festival  ', '  House, Techno  ', ...showRow, 'private notes']] });
   const response = fixture.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET });
-  assert.deepEqual(response.rows, [[...showHeaders, 'Style'], [...showRow, '  House, Techno  ']]);
+  assert.deepEqual(response.rows, [[...showHeaders, 'Style', 'Category'], [...showRow, '  House, Techno  ', '  Festival  ']]);
   const catalog = createArtistCatalog({ env, fetchImpl: async () => json(response) });
   const { rows } = await catalog.readShows();
   assert.equal(parseShows(rows)[0].style, 'House, Techno');
+  assert.equal(parseShows(rows)[0].category, 'Festival');
   assert.doesNotMatch(JSON.stringify(rows), /private notes|Internal Notes/);
   assert.equal(parseShows([showHeaders, showRow])[0].style, '');
-  const duplicateRows = [[...showHeaders, 'Style', ' style '], [...showRow, 'House', 'Techno']];
-  const duplicate = await bridgeFixture({ showRows: duplicateRows });
-  assert.equal(duplicate.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET }).code, 'INVALID_STRUCTURE');
-  await assert.rejects(createArtistCatalog({ env, fetchImpl: async () => json({ ok: true, rows: duplicateRows }) }).readShows(), unavailable);
+  assert.equal(parseShows([showHeaders, showRow])[0].category, '');
+  for (const optional of ['Style', 'Category']) {
+    const duplicateRows = [[...showHeaders, optional, ` ${optional.toLowerCase()} `], [...showRow, 'First', 'Second']];
+    const duplicate = await bridgeFixture({ showRows: duplicateRows });
+    assert.equal(duplicate.post({ action: 'readShows', secret: env.ARTIST_CATALOG_SECRET }).code, 'INVALID_STRUCTURE');
+    await assert.rejects(createArtistCatalog({ env, fetchImpl: async () => json({ ok: true, rows: duplicateRows }) }).readShows(), unavailable);
+  }
+  const categoryOnly = createArtistCatalog({ env, fetchImpl: async () => json({ ok: true, rows: [[' category ', ...showHeaders], ['Afters', ...showRow]] }) });
+  assert.equal(parseShows((await categoryOnly.readShows()).rows)[0].category, 'Afters');
 });
 
 test('artist normalization matches accents, case and spacing while preserving readable spelling', () => {

@@ -21,6 +21,19 @@ test('festival results combine the listed music styles without duplicates or inf
   assert.deepEqual(input, before);
 });
 
+test('festival categories preserve complete matching labels and do not inherit only the nearest row', () => {
+  const input = [row(0, { category: ' Festival ', distanceMiles: 30 }), row(1, { category: 'festival', distanceMiles: 2 }), row(2, { category: ' Daytime / Nighttime ' }), row(3, { category: '' })];
+  const before = structuredClone(input);
+  const [mixed] = groupEventResults(input);
+  assert.deepEqual(mixed.categories, ['Festival', 'Daytime / Nighttime']);
+  assert.equal(mixed.category, '');
+  const [single] = groupEventResults(rows(4, { category: 'Festival' }));
+  assert.equal(single.category, 'Festival');
+  assert.deepEqual(single.categories, ['Festival']);
+  assert.deepEqual(groupEventResults(rows(4))[0].categories, []);
+  assert.deepEqual(input, before);
+});
+
 test('three entries remain separate and four become one named event', () => {
   const three = rows(3);
   assert.deepEqual(groupEventResults(three), three);

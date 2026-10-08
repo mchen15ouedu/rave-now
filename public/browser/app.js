@@ -39,6 +39,19 @@ function showDate(show) {
   return String(show.dateLabel || 'Date to be confirmed');
 }
 
+function categoryKey(label) {
+  return label.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function categoryColor(label) {
+  const key = categoryKey(label);
+  const known = { nighttime: 'nighttime', daytime: 'daytime', festival: 'festival', afters: 'afters' };
+  if (Object.hasOwn(known, key)) return known[key];
+  let hash = 0;
+  for (const character of key) hash = (Math.imul(hash, 31) + character.codePointAt(0)) >>> 0;
+  return `other-${hash % 6}`;
+}
+
 function showCard(show) {
   const card = element('article', 'show-card');
   const date = element('time', '', showDate(show));
@@ -93,6 +106,19 @@ function showCard(show) {
     for (const [value, label] of extraTickets) optionLinks.append(showLink(value, label));
     options.append(optionLinks);
     card.append(options);
+  }
+  const categoryValues = Array.isArray(show.categories) ? show.categories : [];
+  const labels = new Map();
+  for (const value of categoryValues) {
+    if (typeof value === 'string' && value.trim() && !labels.has(categoryKey(value))) labels.set(categoryKey(value), value.trim());
+  }
+  if (!labels.size && typeof show.category === 'string' && show.category.trim()) labels.set(categoryKey(show.category), show.category.trim());
+  if (labels.size) {
+    const categories = element('div', 'show-categories');
+    categories.setAttribute('role', 'group');
+    categories.setAttribute('aria-label', 'Event categories');
+    for (const label of labels.values()) categories.append(element('span', `show-category category-${categoryColor(label)}`, label));
+    card.append(categories);
   }
   return card;
 }

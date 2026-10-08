@@ -6,7 +6,7 @@
  * then set the same secret and this deployment's /exec URL in the HF Space's
  * Secrets as ARTIST_CATALOG_SECRET and ARTIST_CATALOG_URL. Never put this key in
  * a browser, repository, or URL. Catalog reads return only name columns; show
- * reads return only the documented event columns and optional Style. ensureEvent writes only
+ * reads return only the documented event columns and optional Style/Category. ensureEvent writes only
  * independently verified event fields and preserves populated tracker facts.
  *
  * Web apps cannot use bound getActiveSpreadsheet(). Fixed openById therefore
@@ -124,14 +124,16 @@ function catalogShowRows_(workbook, showSheetId) {
     return index;
   });
   var publicHeaders = CATALOG_SHOW_HEADERS.slice();
-  var styleIndex = keys.indexOf('style');
-  if (styleIndex >= 0) {
-    if (keys.lastIndexOf('style') !== styleIndex) {
-      var duplicate = new Error('Style header duplicated'); duplicate.catalogCode = 'INVALID_STRUCTURE'; throw duplicate;
+  ['Style', 'Category'].forEach(function (header) {
+    var key = header.trim().toLowerCase().replace(/[^a-z0-9]/g, ''), index = keys.indexOf(key);
+    if (index >= 0) {
+      if (keys.lastIndexOf(key) !== index) {
+        var duplicate = new Error('Optional header duplicated'); duplicate.catalogCode = 'INVALID_STRUCTURE'; throw duplicate;
+      }
+      publicHeaders.push(header);
+      indexes.push(index);
     }
-    publicHeaders.push('Style');
-    indexes.push(styleIndex);
-  }
+  });
   var rows = [publicHeaders];
   for (var row = 1; row < values.length; row++) {
     rows.push(indexes.map(function (index) { return values[row][index]; }));

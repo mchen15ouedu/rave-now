@@ -5,7 +5,7 @@ import { calendarDate, parseShowDate } from '../src/shows.mjs';
 
 const projectDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dayMilliseconds = 86_400_000;
-const headers = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)', 'Style'];
+const headers = ['Artist', 'Event', 'Location', 'City', 'Address', 'Ticket Link', 'Show Time', 'YouTube (Most Popular Song)', 'Style', 'Category'];
 const description = 'Fictional sample events for demonstrating Rave Now. These are not real shows or ticket offers.';
 const addDays = (date, offset) => new Date(new Date(`${date}T12:00:00Z`).getTime() + offset * dayMilliseconds).toISOString().slice(0, 10);
 const dateLabel = date => new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }).format(new Date(`${date}T12:00:00Z`));
@@ -19,7 +19,7 @@ export function buildSampleData(anchorDate = calendarDate(new Date(), process.en
   const weekday = new Date(`${anchorDate}T12:00:00Z`).getUTCDay();
   const fridayOffset = weekday === 0 ? -2 : 5 - weekday;
   const rows = [headers.slice()];
-  const add = ({ artist = '', event = '', venue, city, address = '', offset, time = '9:00 PM', tickets = true, listen = true }) => {
+  const add = ({ artist = '', event = '', venue, city, address = '', offset, time = '9:00 PM', tickets = true, listen = true, category = 'Nighttime' }) => {
     const title = artist || event;
     rows.push([
       artist, event, venue, city, address,
@@ -27,11 +27,12 @@ export function buildSampleData(anchorDate = calendarDate(new Date(), process.en
       `${dateLabel(addDays(anchorDate, offset))} - ${time}`,
       artist && listen ? `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}` : '',
       artist === 'Sample Circuit' ? 'Techno' : artist === 'Sample Pulse' ? 'Trance' : 'House',
+      event ? 'Festival' : category,
     ]);
   };
 
   add({ artist: 'Sample Archive', venue: 'Sample Yesterday Hall', city: 'Dallas, TX', offset: -1 });
-  add({ artist: 'Sample Dawn', venue: 'Sample Daylight Room', city: 'Dallas, TX', address: 'Dallas, TX', offset: 0 });
+  add({ artist: 'Sample Dawn', venue: 'Sample Daylight Room', city: 'Dallas, TX', address: 'Dallas, TX', offset: 0, category: 'Daytime' });
   add({ artist: 'Sample Skyline', venue: 'Sample City Room', city: 'New York, NY', offset: 0 });
   add({ artist: 'Sample Circuit', venue: 'Sample Warehouse', city: 'Dallas, TX', address: 'Dallas, TX', offset: fridayOffset });
   add({ artist: 'Sample Vector', venue: 'Sample Riverside Room', city: 'Fort Worth, TX', offset: fridayOffset + 1 });
@@ -43,7 +44,7 @@ export function buildSampleData(anchorDate = calendarDate(new Date(), process.en
   add({ artist: 'Sample Aurora', venue: 'TBA', city: 'Los Angeles', offset: Math.max(0, fridayOffset + 1) });
 
   add({ artist: 'Sample Metro', venue: 'Sample Midtown Room', city: 'New York, NY', address: '123 Sample Avenue, New York, NY 10036', offset: fridayOffset, time: '11:00 PM' });
-  add({ artist: 'Sample Tidal', venue: 'Sample Brooklyn Room', city: 'Brooklyn, NY', offset: fridayOffset, listen: false });
+  add({ artist: 'Sample Tidal', venue: 'Sample Brooklyn Room', city: 'Brooklyn, NY', offset: fridayOffset, listen: false, category: 'Afters' });
   add({ artist: 'Sample Pulse', venue: 'Sample Midtown Room', city: 'New York, NY', address: '123 Sample Avenue, New York, NY 10036', offset: fridayOffset + 1, time: '11:00 PM' });
   add({ artist: 'Sample Pulse', venue: 'Sample Later Room', city: 'New York, NY', offset: 15 });
   add({ artist: 'Sample Pulse', venue: 'Sample Riverside Room', city: 'Fort Worth, TX', offset: 18 });

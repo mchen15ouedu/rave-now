@@ -79,6 +79,7 @@ export function parseShows(rows) {
   indexes.city = headers.indexOf('city');
   indexes.event = headers.indexOf('event');
   indexes.style = headers.indexOf('style');
+  indexes.category = headers.indexOf('category');
   const shows = [];
   let invalidDates = 0;
   let missingArtists = 0;
@@ -110,6 +111,7 @@ export function parseShows(rows) {
       id: `tracker-row-${index + 2}`,
       artist,
       style: indexes.style >= 0 ? clean(row[indexes.style]) : '',
+      category: indexes.category >= 0 ? clean(row[indexes.category]) : '',
       ...(indexes.event >= 0 ? { event } : {}),
       ...(eventOnly ? {
         type: 'event',

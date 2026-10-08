@@ -134,11 +134,13 @@ function showRows(values) {
     return index;
   });
   const publicHeaders = SHOW_HEADERS.slice();
-  const styleIndex = keys.indexOf('style');
-  if (styleIndex >= 0) {
-    if (keys.lastIndexOf('style') !== styleIndex) throw unavailable();
-    publicHeaders.push('Style');
-    indexes.push(styleIndex);
+  for (const header of ['Style', 'Category']) {
+    const key = headerKey(header), index = keys.indexOf(key);
+    if (index >= 0) {
+      if (keys.lastIndexOf(key) !== index) throw unavailable();
+      publicHeaders.push(header);
+      indexes.push(index);
+    }
   }
   const rows = [publicHeaders];
   for (const row of values.slice(1)) {

@@ -110,7 +110,10 @@ function eventResult(entries) {
   const event = usableEventName(first.show.event);
   const ticketLinks = eventTickets(entries);
   const styles = new Map();
+  const categories = new Map();
   for (const { show } of entries) {
+    const category = clean(show.category);
+    if (category && !categories.has(normalized(category))) categories.set(normalized(category), category);
     for (const value of clean(show.style).split(/[,;]/u)) {
       const style = clean(value);
       if (style && !styles.has(normalized(style))) styles.set(normalized(style), style);
@@ -122,6 +125,8 @@ function eventResult(entries) {
     type: 'event',
     artist: event,
     style: [...styles.values()].join(', '),
+    category: categories.size === 1 ? [...categories.values()][0] : '',
+    categories: [...categories.values()],
     event,
     date: dates[0],
     dateEnd: dates.at(-1),

@@ -48,6 +48,18 @@ a{color:#1458b0;text-underline-offset:3px}
 .show-links a{font-size:15px;font-weight:600;padding:4px 0}
 .ticket-options{font-size:14px;margin-top:12px}
 .ticket-options summary{color:#1458b0;cursor:pointer}
+.show-categories{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:6px;margin-top:14px}
+.show-category{max-width:100%;min-width:0;padding:4px 9px;border-radius:5px;font-size:12px;font-weight:600;line-height:1.5;overflow-wrap:anywhere;text-align:right}
+.category-nighttime{color:#174a8b;background:#eaf2ff}
+.category-daytime{color:#784400;background:#fff2cc}
+.category-festival{color:#603394;background:#f3eaff}
+.category-afters{color:#145c54;background:#e3f5f1}
+.category-other-0{color:#8c294c;background:#fdeaf1}
+.category-other-1{color:#315d22;background:#edf5e8}
+.category-other-2{color:#3e4285;background:#eeeefe}
+.category-other-3{color:#684a30;background:#f5eee5}
+.category-other-4{color:#43515f;background:#edf1f5}
+.category-other-5{color:#8e3434;background:#fcecec}
 footer{font-size:11px;color:#666;line-height:1.5;margin:22px 0}
 footer a{color:inherit}
 @media(max-width:420px){main{margin:24px auto;padding:0 16px}label{font-size:21px}button{padding:10px 12px}.show-card{padding:18px 0}}

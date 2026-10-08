@@ -20,6 +20,8 @@ Try **New York, NY**, **Dallas, TX**, or **Las Vegas, NV** for nearby samples, o
 
 Results show music styles directly below the artist or event name. Grouped festivals combine the styles listed on their matching performer rows; missing styles stay blank.
 
+Category labels appear at the bottom-right of each card: blue for Nighttime, amber for Daytime, purple for Festival, and teal for Afters. Labels use the feed's category values; blank categories stay hidden.
+
 The page requests location access when opened. Your browser controls its permission dialog. If access is denied or unavailable, enter a city and state/country or a US ZIP code in **Location or artist**. An artist search uses the last accepted location; before a location is available, it searches matching appearances across all sample locations and displays that scope. Use `location: Paris, France` or `artist: Paris` to distinguish an artist from a place.
 
 Slow searches show progress. Temporary search failures offer **Try again**; that button appears only after an error. Unavailable artist suggestions or an artist-list outage do not block valid city searches. During an artist-list outage, an unrecognized query may need `location: City` or `artist: Name` to clarify the search. Artist additions are reported as saved only after confirmation; an unconfirmed update is shown alongside any usable results.
