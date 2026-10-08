@@ -1,8 +1,7 @@
 const $ = (id) => document.getElementById(id);
-const state = { origin: null, lastSearch: null, pendingSearch: null, view: 'nearby', request: 0, geoRequest: 0, controller: null, suggestionsLoaded: false, suggestionsTimer: null, suggestionsController: null };
+const state = { origin: null, lastSearch: null, pendingSearch: null, view: 'nearby', request: 0, geoRequest: 0, controller: null };
 const searchTimeoutMs = 50000;
 const slowSearchMs = 4000;
-const suggestionsDelayMs = 1500;
 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Chicago';
 const rangeLabels = { today: 'Today', nearby: 'Next 7 days', weekend: 'This weekend', month: 'This month', 'three-months': 'Next 3 months', full: 'All upcoming shows' };
 const selectableRanges = ['today', 'nearby', 'weekend', 'month', 'three-months'];
@@ -142,46 +141,6 @@ function showSearchError(message, input, request, canRetry) {
   $('location-status').append(element('span', '', ' '), retry);
 }
 
-function stopSuggestions() {
-  clearTimeout(state.suggestionsTimer);
-  state.suggestionsTimer = null;
-  state.suggestionsController?.abort();
-  state.suggestionsController = null;
-}
-
-async function loadSuggestions() {
-  if (state.suggestionsLoaded || state.pendingSearch || state.controller) return;
-  const controller = state.suggestionsController = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    const response = await fetch('/api/browser/artists', {
-      headers: { Accept: 'application/json' }, signal: controller.signal,
-      credentials: 'same-origin', cache: 'no-store',
-    });
-    const data = response.ok ? await response.json() : null;
-    if (controller.signal.aborted || state.suggestionsController !== controller || !Array.isArray(data?.artists)) return;
-    const suggestions = data.artists.filter(name => typeof name === 'string' && name.length <= 120).map(name => {
-      const option = element('option'); option.value = name; option.label = 'Artist'; return option;
-    });
-    $('artist-suggestions').replaceChildren(...suggestions);
-    state.suggestionsLoaded = true;
-  } catch {
-    // Suggestions are optional. Their availability cannot replace show results.
-  } finally {
-    clearTimeout(timeout);
-    if (state.suggestionsController === controller) state.suggestionsController = null;
-  }
-}
-
-function scheduleSuggestions() {
-  if (state.suggestionsLoaded) return;
-  clearTimeout(state.suggestionsTimer);
-  state.suggestionsTimer = setTimeout(() => {
-    state.suggestionsTimer = null;
-    loadSuggestions();
-  }, suggestionsDelayMs);
-}
-
 function updateRangeButtons() {
   for (const range of selectableRanges) $('range-' + range).setAttribute('aria-pressed', String(state.view === range));
 }
@@ -208,11 +167,10 @@ function updateFreshness(source) {
 }
 
 async function loadShows(input) {
-  stopSuggestions();
   state.controller?.abort();
   const request = ++state.request;
   const controller = state.controller = new AbortController();
-  let timeout, timedOut = false, succeeded = false, canRetry = true;
+  let timeout, timedOut = false, canRetry = true;
   const deadline = new Promise((_, reject) => {
     timeout = setTimeout(() => {
       timedOut = true;
@@ -262,7 +220,6 @@ async function loadShows(input) {
         : data.artistRegistration?.status === 'not-saved' ? ' Artist list update could not be confirmed.' : '';
       status(`${data.shows.length ? name : `No shows found for ${name}`} · ${scope}.${saved}`);
     } else status(data.shows.length ? `Shows near ${label} · ${rangeLabel}` : `No shows near ${label} · ${rangeLabel}. Try another location, artist or date range.`);
-    succeeded = true;
   } catch (error) {
     if (request !== state.request || error.name === 'AbortError' && !timedOut) return;
     const message = timedOut ? 'The search took too long. Try again or enter a city.'
@@ -276,13 +233,11 @@ async function loadShows(input) {
       state.pendingSearch = null;
       state.controller = null;
       $('show-grid').setAttribute('aria-busy', 'false');
-      if (succeeded) scheduleSuggestions();
     }
   }
 }
 
 function requestLocation() {
-  stopSuggestions();
   const geoRequest = ++state.geoRequest;
   ++state.request;
   state.controller?.abort();

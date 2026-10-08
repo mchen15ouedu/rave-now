@@ -39,10 +39,9 @@
     <form id="location-form">
       <div class="search-label"><label for="city">Location or artist</label><button id="contribution-open" class="profile-link" type="button" aria-haspopup="dialog" aria-controls="contribution-dialog">Missing artist?</button></div>
       <div class="location-entry">
-        <input id="city" name="query" type="text" placeholder="City, ZIP or artist name" maxlength="160" autocomplete="off" list="artist-suggestions" required>
+        <input id="city" name="query" type="text" placeholder="City, ZIP or artist name" maxlength="160" autocomplete="off" required>
         <button type="submit">Find shows</button>
       </div>
-      <datalist id="artist-suggestions"></datalist>
     </form>
     <div class="date-filters" role="group" aria-label="Show date range">
       <button id="range-today" type="button" aria-pressed="false">Today</button>
