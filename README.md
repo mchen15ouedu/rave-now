@@ -22,7 +22,7 @@ Results show music styles directly below the artist or event name. Grouped festi
 
 Category labels appear at the bottom-right of each card: blue for Nighttime, amber for Daytime, purple for Festival, and teal for Afters. Labels use the feed's category values; blank categories stay hidden.
 
-Browser results at the same venue and listed show time combine into one card with all performer names, music styles, categories, unique ticket links, and labeled YouTube links. When only a date is listed, matching date-only entries at that venue combine. Different listed times, venues, conflicting known street addresses, and unknown sites stay separate. Artist and date filtering happen before merging; named festival cards retain their existing grouping. Listed times appear on single-date cards, and known times sort earliest first within each day.
+Non-festival browser results at the same venue and listed show time combine into one card with all performer names, music styles, categories, unique ticket links, and labeled YouTube links. When only a date is listed, matching date-only entries at that venue combine. Different listed times, venues, conflicting known street addresses, and unknown sites stay separate. Artist and date filtering happen before merging. A `Festival` category uses the Event name as the card heading, regardless of the number of matching artists; its ticket links and one festival YouTube search remain available. Distinct festivals and regular shows stay separate. If a festival has no usable Event name, artist headings remain until the feed supplies that name. Listed times appear on single-date cards, and known times sort earliest first within each day.
 
 The page requests location access when opened. Your browser controls its permission dialog. If access is denied or unavailable, enter a city and state/country or a US ZIP code in **Location or artist**. An artist search uses the last accepted location; before a location is available, it searches matching appearances across all sample locations and displays that scope. Use `location: Paris, France` or `artist: Paris` to distinguish an artist from a place.
 
@@ -32,7 +32,7 @@ A full artist name missing from Artist List is automatically verified before it 
 
 Date filters offer **Today**, **Next 7 days**, **This weekend**, **This month**, and **Next 3 months**. Next 7 days includes today and the following six calendar days. Weekend results include the remaining Friday–Sunday dates. Month results include today through the last day of this month. Next 3 months ends the day before the same date three calendar months later, with shorter months handled at their last valid date. Searches use the accepted location's time zone and retain the last submitted location and artist when a date filter changes. Empty windows stay empty.
 
-Results sort by the **soonest upcoming date first**. When more than three matching DJ entries share a named event, location, and festival occurrence, the list shows that festival once with its date range and links. Three entries or fewer keep their performer names. Filtering happens before grouping; separate locations and occurrences stay separate. Festival groups sort by their start date, soonest first. A dated event announcement can appear without a listed artist.
+Results sort by the **soonest upcoming date first**. Entries marked `Festival` in Category show their Event name once with the festival date range and links. Other cards retain their artist names, even for large lineups. Filtering happens before grouping; separate locations and occurrences stay separate. Festival groups sort by their start date, soonest first. A dated event announcement can appear without a listed artist.
 
 The default radius is **80 straight-line miles**, an approximation for a two-hour drive. Road routes, traffic, and actual driving times are not calculated. The bundled offline [GeoNames](https://www.geonames.org/) directory resolves cities and US ZIP codes without an external request. Address takes priority over City; unavailable street coordinates fall back to a labeled city or ZIP center. Add a state or country for ambiguous place names.
 
@@ -100,7 +100,7 @@ Try `INFO`, then `Dallas TX`. Use **Preview 10 PM reminder** to inspect the week
 | `START` | Reactivate service. |
 | `DELETE` | Remove registration, location, reminder history, cached replies, and the current session. |
 
-Commands ignore case. SMS and WhatsApp use the same event-selection rules but keep separate registrations. `FULL` needs no saved location. Dated events without usable locations remain in `FULL`; nearby searches exclude them. The same festival grouping applies to replies and reminders.
+Commands ignore case. SMS and WhatsApp use the same event-selection rules but keep separate registrations. `FULL` needs no saved location. Dated events without usable locations remain in `FULL`; nearby searches exclude them. The messaging workflow retains its existing grouping of four or more entries sharing a named event; browser festival headings use Category.
 
 ## Messaging deployment
 

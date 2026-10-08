@@ -40,7 +40,7 @@ function showClock(show) {
   const seconds = time[3] === '00' ? '' : `:${time[3]}`;
   const clock = `${hour % 12 || 12}:${time[2]}${seconds} ${hour < 12 ? 'AM' : 'PM'}`;
   const zone = typeof show.timeZoneOffset === 'string' ? show.timeZoneOffset.trim() : '';
-  if (/^[+-](?:0\d|1[0-4]):[0-5]\d$/.test(zone)) return `${clock} UTC${zone}`;
+  if (/^[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00)$/.test(zone)) return `${clock} UTC${zone}`;
   if (/^[A-Za-z]{2,10}$/.test(zone)) return `${clock} ${zone.toUpperCase()}`;
   return clock;
 }
@@ -76,17 +76,26 @@ function categoryColor(label) {
   return `other-${hash % 6}`;
 }
 
+function usableEventTitle(value) {
+  if (typeof value !== 'string') return null;
+  const title = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  if (!title || /^(?:[-–—]|n\/?a|none|unknown|event|festival|music festival|concert|show|live music)$/i.test(title)) return null;
+  return /\b(?:tba|tbd|to be (?:announced|determined)|unknown)\b/i.test(title) ? null : title;
+}
+
 function showCard(show) {
   const card = element('article', 'show-card');
   const date = element('time', '', showDate(show));
   if (typeof show.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(show.date)) date.dateTime = show.date;
   const dateLine = element('p', 'show-date');
   dateLine.append(date);
-  const title = show.type === 'event' ? show.event || show.artist || 'Live event' : show.artist || 'Live show';
+  const festivalCategory = [show.category, ...(Array.isArray(show.categories) ? show.categories : [])].some(value => typeof value === 'string' && categoryKey(value) === 'festival');
+  const festival = festivalCategory ? usableEventTitle(show.event) : null;
+  const title = festival || (show.type === 'event' && !festivalCategory ? show.event || show.artist || 'Live event' : show.artist || 'Live show');
   card.append(element('h2', '', title));
   if (typeof show.style === 'string' && show.style.trim()) card.append(element('p', 'show-style', show.style.trim()));
   card.append(dateLine);
-  if (show.event && show.type !== 'event') card.append(element('p', '', show.event));
+  if (show.event && show.type !== 'event' && !festival && !festivalCategory) card.append(element('p', '', show.event));
   const venue = [show.venue, show.city].filter(Boolean).join(' · ');
   if (venue) card.append(element('p', '', venue));
   if (show.address && show.locationSource !== 'city') card.append(element('p', 'show-address', show.address));
@@ -95,18 +104,18 @@ function showCard(show) {
     card.append(element('p', 'show-distance', `≈ ${miles < 1 ? '<1 mile' : miles === 1 ? '1 mile' : `${miles} miles`}${show.locationApproximate ? ' · city estimate' : ''}`));
   }
   const links = element('div', 'show-links');
-  let youtubeUrl = httpUrl(show.youtubeUrl);
-  let youtubeLabel = show.type === 'event' ? 'YouTube search' : 'YouTube';
-  if (!show.youtubeUrl && typeof show.artist === 'string' && show.artist.trim()) {
+  let youtubeUrl = festival ? null : httpUrl(show.youtubeUrl);
+  let youtubeLabel = festival || show.type === 'event' ? 'YouTube search' : 'YouTube';
+  if (festival || !show.youtubeUrl && typeof show.artist === 'string' && show.artist.trim()) {
     const search = new URL('https://www.youtube.com/results');
-    search.searchParams.set('search_query', show.artist);
+    search.searchParams.set('search_query', festival || show.artist);
     youtubeUrl = search.href;
     youtubeLabel = 'YouTube search';
   }
-  const ticketLinks = ['event', 'show-group'].includes(show.type) && Array.isArray(show.ticketLinks) && show.ticketLinks.length
+  const ticketLinks = (festival || ['event', 'show-group'].includes(show.type)) && Array.isArray(show.ticketLinks) && show.ticketLinks.length
     ? show.ticketLinks.filter((link) => link && typeof link === 'object').map((link) => [link.url, typeof link.label === 'string' && link.label.trim() ? link.label.trim() : 'Tickets']) : [[show.ticketUrl, 'Tickets']];
   const safeTickets = safeLinkPairs(ticketLinks);
-  const youtubeLinks = Array.isArray(show.youtubeLinks) && show.youtubeLinks.length
+  const youtubeLinks = !festival && Array.isArray(show.youtubeLinks) && show.youtubeLinks.length
     ? show.youtubeLinks.filter((link) => link && typeof link === 'object').map((link) => [link.url, typeof link.label === 'string' && link.label.trim() ? link.label.trim() : youtubeLabel]) : [[youtubeUrl, youtubeLabel]];
   const safeVideos = safeLinkPairs(youtubeLinks, true);
   const extraTickets = safeTickets.length > 3 ? safeTickets.slice(1) : [];

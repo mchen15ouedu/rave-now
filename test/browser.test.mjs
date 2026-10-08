@@ -71,9 +71,9 @@ test('manual city uses its local zone; weekend and City fallback share messaging
 });
 
 test('browser collapses a large matching festival after filtering and retains event links and dates',async t=>{
- const festivalShows=parseShows([[...header,'Event'],
-  ...Array.from({length:100},(_,i)=>['DJ '+i,'Festival grounds','','Dallas, TX','https://example.com/festival',i<50?'2026-10-09':'2026-10-10','https://youtu.be/artist'+i,'Example Festival']),
-  ['Independent DJ','Other venue','','Dallas, TX','https://example.com/other','2026-10-11','',''],
+ const festivalShows=parseShows([[...header,'Event','Category'],
+  ...Array.from({length:100},(_,i)=>['DJ '+i,'Festival grounds','','Dallas, TX','https://example.com/festival',i<50?'2026-10-09':'2026-10-10','https://youtu.be/artist'+i,'Example Festival','Festival']),
+  ['Independent DJ','Other venue','','Dallas, TX','https://example.com/other','2026-10-11','','','Nighttime'],
  ]);
  const {post}=await server(t,{source:{load:async()=>({shows:festivalShows})},geocoder:{resolve:async()=>({lat:32.78,lng:-96.8,label:'Dallas',approximate:true})}});
  const res=await post({view:'nearby',latitude:32.78,longitude:-96.8,timeZone:'America/Chicago'}),data=await res.json();
@@ -87,13 +87,13 @@ test('browser collapses a large matching festival after filtering and retains ev
  assert.ok(festival.date<data.shows[1].date, 'A multi-day festival sorts by its upcoming start date');
 });
 
-test('festival threshold counts only entries inside the search window',async t=>{
- const festivalShows=parseShows([[...header,'Event'],
-  ...Array.from({length:4},(_,i)=>['DJ '+i,'Festival grounds','','Dallas, TX','https://example.com/festival',i<3?'2026-10-11':'2026-10-12','','Example Festival']),
+test('festival category uses the event name even for fewer than four filtered performers',async t=>{
+ const festivalShows=parseShows([[...header,'Event','Category'],
+  ...Array.from({length:4},(_,i)=>['DJ '+i,'Festival grounds','','Dallas, TX','https://example.com/festival',i<3?'2026-10-11':'2026-10-12','','Example Festival','Festival']),
  ]);
  const {post}=await server(t,{source:{load:async()=>({shows:festivalShows})},geocoder:{resolve:async()=>({lat:32.78,lng:-96.8})}});
  const data=await (await post({view:'nearby',latitude:32.78,longitude:-96.8,timeZone:'America/Chicago'})).json();
- assert.equal(data.total,1);assert.equal(data.shows[0].type,'show-group');assert.equal(data.shows[0].entryCount,3);assert.match(data.shows[0].artist,/DJ 0.*DJ 1.*DJ 2/);
+ assert.equal(data.total,1);assert.equal(data.shows[0].type,'event');assert.equal(data.shows[0].entryCount,3);assert.equal(data.shows[0].artist,'Example Festival');assert.equal(data.shows[0].dateEnd,'2026-10-11');
  const full=await (await post({view:'full',timeZone:'America/Chicago'})).json();
  assert.equal(full.total,1);assert.equal(full.shows[0].entryCount,4);
 });
@@ -148,4 +148,23 @@ test('browser merges same-slot lineups after filtering and keeps other times and
   const filtered=await (await post({view:'full',query:'artist: DJ Two'})).json();
   assert.equal(filtered.total,1);assert.equal(filtered.shows[0].artist,'DJ Two');
   assert.equal(filtered.shows[0].type,undefined,'Filtering does not expose the other merged performers');
+});
+
+
+test('browser keeps large regular lineups and uses a festival title for a single matching artist', async t => {
+  const records=parseShows([[...header,'Event','Category'],
+    ...Array.from({length:6},(_,i)=>['Regular DJ '+i,'Club','','Dallas, TX','https://example.com/club','Oct 9, 2026 - 8 PM','https://youtu.be/regular'+i,'Launch Night','Nighttime']),
+    ['Festival DJ','Festival grounds','','Dallas, TX','https://example.com/festival','Oct 10, 2026 - 6 PM','https://youtu.be/performer','Sample Festival',' Festival '],
+  ]);
+  const {post}=await server(t,{source:{load:async()=>({shows:records})},catalog:{load:async()=>({artists:['Festival DJ'],promoters:[]})}});
+  const all=await (await post({view:'full'})).json();
+  assert.equal(all.total,2);
+  assert.equal(all.shows[0].type,'show-group');assert.equal(all.shows[0].artist,Array.from({length:6},(_,i)=>'Regular DJ '+i).join(', '));
+  assert.equal(all.shows[0].youtubeLinks.length,6);
+  assert.equal(all.shows[1].type,'event');assert.equal(all.shows[1].artist,'Sample Festival');
+  assert.equal(all.shows[1].youtubeLinks,undefined);assert.equal(all.shows[1].artists,undefined);
+  assert.equal(new URL(all.shows[1].youtubeUrl).searchParams.get('search_query'),'Sample Festival');
+  const filtered=await (await post({query:'Festival DJ'})).json();
+  assert.equal(filtered.total,1);assert.equal(filtered.shows[0].artist,'Sample Festival');assert.equal(filtered.shows[0].entryCount,1);
+  assert.equal(filtered.shows[0].ticketUrl,'https://example.com/festival');
 });

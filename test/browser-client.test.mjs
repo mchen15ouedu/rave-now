@@ -165,6 +165,51 @@ test('a shared show card keeps performer names, styles, categories and every saf
  assert.ok(links.every(node=>node.children.length===0));
 });
 
+
+test('Festival category uses the event headline and one festival search while retaining every ticket',async()=>{
+ const artists=Array.from({length:20},(_,i)=>'DJ '+i).join(', ');
+ const tickets=Array.from({length:5},(_,i)=>({url:'https://tickets.example/festival/'+i,label:'Ticket option '+i}));
+ const videos=Array.from({length:20},(_,i)=>({url:'https://youtu.be/performer'+i,label:'YouTube · DJ '+i}));
+ const variants=[{type:'show-group',category:'  fEsTiVaL  '},{type:'show-group',categories:['Nighttime',' FESTIVAL ']},{type:'event',category:'Festival'},{category:'Festival'}];
+ const shows=variants.map(variant=>({...variant,artist:artists,event:'  Neon & Friends  ',style:'House, Techno',date:'2026-10-09',ticketLinks:tickets,youtubeLinks:videos,youtubeUrl:'https://youtu.be/performer0'}));
+ const {nodes}=await page({fetchResult:()=>response({shows,locationLabel:'Dallas',days:7})});
+ submit(nodes,'Dallas TX');await tick();
+ for(const card of nodes.get('show-grid').children) {
+  assert.equal(card.children[0].textContent,'Neon & Friends');assert.equal(card.children[1].textContent,'House, Techno');
+  assert.equal(card.children.filter(node=>node.textContent==='Neon & Friends').length,1);
+  assert.ok(!descendants(card).some(node=>node.textContent===artists));
+  const links=descendants(card).filter(node=>node.tag==='a');
+  assert.deepEqual(links.filter(node=>node.href.startsWith('https://tickets.example/')).map(node=>node.href),tickets.map(ticket=>ticket.url));
+  const youtube=links.filter(node=>new URL(node.href).hostname==='www.youtube.com');
+  assert.equal(youtube.length,1);assert.equal(youtube[0].textContent,'YouTube search');assert.equal(new URL(youtube[0].href).searchParams.get('search_query'),'Neon & Friends');
+  assert.equal(links.length,tickets.length+1);assert.ok(links.every(node=>node.target==='_blank'&&node.rel==='noopener noreferrer'));
+ }
+});
+
+test('nonfestival categories keep the complete artist headline and individual performer links',async()=>{
+ const names=Array.from({length:12},(_,i)=>'Artist '+i),artist=names.join(', ');
+ const youtubeLinks=names.map((name,i)=>({url:'https://youtu.be/artist'+i,label:'YouTube · '+name}));
+ const shows=['Nighttime','Festival Afterparty'].map(category=>({type:'show-group',artist,event:'Club Night',category,date:'2026-10-09',youtubeLinks}));
+ const {nodes}=await page({fetchResult:()=>response({shows,locationLabel:'Dallas',days:7})});
+ submit(nodes,'Dallas TX');await tick();
+ for(const card of nodes.get('show-grid').children) {
+  assert.equal(card.children[0].textContent,artist);assert.ok(card.children.some(node=>node.textContent==='Club Night'));
+  assert.deepEqual(descendants(card).filter(node=>node.tag==='a').map(node=>node.textContent),youtubeLinks.map(link=>link.label));
+ }
+});
+
+test('Festival cards with missing or placeholder event names retain artists without inventing an event title',async()=>{
+ const artist='Alpha, Beta',youtubeLinks=[{url:'https://youtu.be/alpha',label:'YouTube · Alpha'},{url:'https://youtu.be/beta',label:'YouTube · Beta'}];
+ const shows=[undefined,'',' Event ','Festival','TBA','To be announced','Unknown Festival'].flatMap(event=>['event','show-group'].map(type=>({type,artist,event,category:'Festival',date:'2026-10-09',youtubeLinks})));
+ const {nodes}=await page({fetchResult:()=>response({shows,locationLabel:'Dallas',days:7})});
+ submit(nodes,'Dallas TX');await tick();
+ for(const card of nodes.get('show-grid').children) {
+  assert.equal(card.children[0].textContent,artist);
+  assert.deepEqual(descendants(card).filter(node=>node.tag==='a').map(node=>node.textContent),youtubeLinks.map(link=>link.label));
+  assert.equal(card.children.filter(node=>node.tag==='p'&&node.className!=='show-date').length,0);
+ }
+});
+
 test('a shared show card collapses many ticket choices while leaving every performer video visible',async()=>{
  const tickets=Array.from({length:6},(_,i)=>({url:'https://tickets.example/artist/'+i,label:'Tickets · Artist '+i}));
  const videos=Array.from({length:6},(_,i)=>({url:'https://www.youtube.com/results?search_query=Artist+'+i,label:'YouTube search · Artist '+i}));

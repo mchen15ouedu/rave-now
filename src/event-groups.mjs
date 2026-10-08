@@ -12,6 +12,11 @@ function normalized(value) {
   return clean(value).toLowerCase();
 }
 
+function hasFestivalCategory(show) {
+  return [show.category, ...(Array.isArray(show.categories) ? show.categories : [])]
+    .some(category => normalized(category) === 'festival');
+}
+
 export function usableEventName(value) {
   const text = clean(value);
   if (!text || /^(?:[-–—]|n\/?a|none|unknown|event|festival|music festival|concert|show|live music)$/i.test(text)) return null;
@@ -83,12 +88,14 @@ function ticketIdentity(value) {
 function eventTickets(entries) {
   const tickets = new Map();
   for (const { show } of entries) {
-    const url = safeHttpUrl(show.ticketUrl);
-    if (!url) continue;
-    const key = ticketIdentity(url);
-    const ticket = tickets.get(key) || { url, dates: new Set() };
-    ticket.dates.add(show.date);
-    tickets.set(key, ticket);
+    for (const link of [...(Array.isArray(show.ticketLinks) ? show.ticketLinks : []), { url: show.ticketUrl }]) {
+      const url = safeHttpUrl(link?.url);
+      if (!url) continue;
+      const key = ticketIdentity(url);
+      const ticket = tickets.get(key) || { url, dates: new Set() };
+      ticket.dates.add(show.date);
+      tickets.set(key, ticket);
+    }
   }
   return [...tickets.values()].map(({ url, dates }) => {
     const ordered = [...dates].sort();
@@ -112,8 +119,10 @@ function eventResult(entries) {
   const styles = new Map();
   const categories = new Map();
   for (const { show } of entries) {
-    const category = clean(show.category);
-    if (category && !categories.has(normalized(category))) categories.set(normalized(category), category);
+    for (const value of [show.category, ...(Array.isArray(show.categories) ? show.categories : [])]) {
+      const category = clean(value);
+      if (category && !categories.has(normalized(category))) categories.set(normalized(category), category);
+    }
     for (const value of clean(show.style).split(/[,;]/u)) {
       const style = clean(value);
       if (style && !styles.has(normalized(style))) styles.set(normalized(style), style);
@@ -145,7 +154,7 @@ function eventResult(entries) {
  * Results use soonest start date first, preserving the input order of date ties.
  * Neither the input records nor the input array are modified.
  */
-export function groupEventResults(matches) {
+export function groupEventResults(matches, { categoryAware = false } = {}) {
   if (!Array.isArray(matches)) throw new TypeError('matches must be an array.');
   const identities = new Map();
   matches.forEach((show, index) => {
@@ -163,6 +172,13 @@ export function groupEventResults(matches) {
   const replacements = new Map();
   const hidden = new Set();
   const collapseSite = (entries) => {
+    if (categoryAware) {
+      if (!entries.some(({ show }) => hasFestivalCategory(show))) return;
+      const firstIndex = Math.min(...entries.map(({ index }) => index));
+      replacements.set(firstIndex, eventResult(entries));
+      for (const { index } of entries) if (index !== firstIndex) hidden.add(index);
+      return;
+    }
     const performers = entries.filter(({ show }) => show.type !== 'event');
     const events = entries.filter(({ show }) => show.type === 'event');
     if (performers.length <= 3 && performers.length) {
@@ -203,7 +219,16 @@ export function groupEventResults(matches) {
     }
     collapse(occurrence);
   }
-  const results = matches.flatMap((show, index) => hidden.has(index) ? [] : [replacements.get(index) ?? show]);
+  const results = matches.flatMap((show, index) => {
+    if (hidden.has(index)) return [];
+    if (replacements.has(index)) return [replacements.get(index)];
+    // A named, explicitly marked festival still has its own headline when its
+    // location is incomplete. Missing sites do not authorize merging other rows.
+    if (categoryAware && show && typeof show === 'object' && hasFestivalCategory(show) && usableEventName(show.event) && dateEpoch(show.date) != null) {
+      return [eventResult([{ show, index }])];
+    }
+    return [show];
+  });
   // A multi-day group can replace its Sunday row with a Friday start date.
   // Sort the completed cards again so that replacement cannot misorder dates.
   return results.sort((a, b) => {
@@ -213,6 +238,13 @@ export function groupEventResults(matches) {
     if (bDate == null) return -1;
     return aDate - bDate;
   });
+}
+
+/** Browser festival headings are authorized by the explicit Category column,
+ * regardless of lineup size. Other shows keep their performer names.
+ */
+export function groupFestivalResults(matches) {
+  return groupEventResults(matches, { categoryAware: true });
 }
 
 function slotLocationKey(value) {
@@ -261,8 +293,11 @@ function slotResult(entries) {
     const bDistance = Number.isFinite(b.show.distanceMiles) ? b.show.distanceMiles : Infinity;
     return bDistance < aDistance ? b : a;
   });
-  const standalone = new Set(entries.map(({ show }) => clean(show.artist)).filter(name => !name.includes(',')).map(normalized));
+  const hasPerformers = entries.some(({ show }) => show.type !== 'event' || show.entryCount !== 0);
+  const standalone = new Set(entries.filter(({ show }) => !hasPerformers || show.type !== 'event' || show.entryCount !== 0)
+    .map(({ show }) => clean(show.artist)).filter(name => !name.includes(',')).map(normalized));
   const namesFor = show => {
+    if (hasPerformers && show.type === 'event' && show.entryCount === 0) return [];
     if (show.type === 'show-group' && Array.isArray(show.artists)) return show.artists.map(clean).filter(Boolean);
     const name = clean(show.artist), pieces = name.split(',').map(clean).filter(Boolean);
     // An Artist cell may itself contain a comma. Only unpack a roster when its
@@ -278,7 +313,7 @@ function slotResult(entries) {
     for (const style of clean(show.style).split(/[,;]/u)) remember(styles, style);
     for (const category of [show.category, ...(Array.isArray(show.categories) ? show.categories : [])]) remember(categories, category);
     const event = usableEventName(show.event);
-    if (event && !names.some(name => normalized(name) === normalized(event)) && normalized(event) !== normalized(show.artist)) remember(events, event);
+    if (event && !names.some(name => normalized(name) === normalized(event)) && (!names.length || normalized(event) !== normalized(show.artist))) remember(events, event);
     const ticketLabel = 'Tickets · ' + clean(show.artist);
     for (const link of [...(Array.isArray(show.ticketLinks) ? show.ticketLinks : []), { url: show.ticketUrl, label: ticketLabel }]) {
       const url = safeHttpUrl(link?.url);
@@ -286,6 +321,12 @@ function slotResult(entries) {
     }
     const scalar = show.type === 'show-group' && Array.isArray(show.youtubeLinks) && show.youtubeLinks.some(link => safeHttpUrl(link?.url)) ? null : safeHttpUrl(show.youtubeUrl);
     if (scalar) for (const name of names) videos.get(normalized(name)).set(ticketIdentity(scalar), scalar);
+    if (scalar && !names.length) {
+      const parsed = new URL(scalar);
+      const prefix = parsed.pathname === '/results' && parsed.searchParams.has('search_query') ? 'YouTube search · ' : 'YouTube · ';
+      const label = prefix + (event || clean(show.artist));
+      extraVideos.set(JSON.stringify([ticketIdentity(scalar), label]), { url: scalar, label });
+    }
     for (const link of Array.isArray(show.youtubeLinks) ? show.youtubeLinks : []) {
       const url = safeHttpUrl(link?.url);
       if (!url) continue;
@@ -330,20 +371,24 @@ function slotResult(entries) {
   };
 }
 
-/** Browser-only consolidation after named festivals have already been counted.
+/** Browser-only consolidation after named Festival projection.
  * A slot needs the same calendar day, explicit clock/offset (or both date-only),
  * and a known physical site. Ambiguous partial locations remain individual.
- * Multi-day event cards keep their date ranges. A one-day event contributes
- * only its existing headline, never an inferred performer roster.
+ * Named Festival cards keep their own headlines and date ranges. Announcements
+ * can add links and event metadata beside actual performers, never a fake DJ.
  */
 export function mergeShowSlots(matches) {
   if (!Array.isArray(matches)) throw new TypeError('matches must be an array.');
   const slots = new Map();
   matches.forEach((show, index) => {
     if (!show || typeof show !== 'object' || show.type === 'event' && show.dateEnd && show.dateEnd !== show.date || dateEpoch(show.date) == null) return;
+    const festival = hasFestivalCategory(show);
+    if (festival && usableEventName(show.event)) return;
     const clock = slotClock(show), site = slotSite(show);
     if (!clock || !site) return;
-    const key = JSON.stringify([show.date, clock.time, clock.offset]);
+    // An unnamed Festival must never borrow a non-festival event name, which
+    // would hide its actual artist names in the browser's Festival projection.
+    const key = JSON.stringify([show.date, clock.time, clock.offset, festival]);
     if (!slots.has(key)) slots.set(key, []);
     slots.get(key).push({ show, index, site });
   });

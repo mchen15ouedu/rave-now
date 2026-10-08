@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupEventResults, mergeShowSlots } from '../src/event-groups.mjs';
+import { groupEventResults, groupFestivalResults, mergeShowSlots } from '../src/event-groups.mjs';
 
 const row = (index, overrides = {}) => ({
   id: `row-${index}`, artist: `DJ ${index}`, event: 'Electric Weekend',
@@ -447,4 +447,168 @@ test('identical street addresses work with missing City without guessing from a 
   assert.equal(mergeShowSlots(rows(2,{city:'',address:'',venue:'Festival Grounds'})).length,2);
   assert.equal(mergeShowSlots(rows(2,{city:'',address:'Dallas, TX 75201',venue:'TBA'})).length,2);
   assert.equal(mergeShowSlots(rows(2,{city:'',venue:'TBA',address:'100 Festival Road, Dallas, TX'})).length,1);
+});
+
+
+test('browser Festival categories replace one, three or hundreds of performers with the named event', () => {
+  for (const count of [1, 3, 500]) {
+    const input = rows(count, { category: 'Festival' });
+    const before = structuredClone(input);
+    const result = mergeShowSlots(groupFestivalResults(input));
+    assert.equal(result.length, 1, String(count));
+    assert.equal(result[0].type, 'event');
+    assert.equal(result[0].artist, 'Electric Weekend');
+    assert.equal(result[0].event, 'Electric Weekend');
+    assert.equal(result[0].entryCount, count);
+    assert.equal(Object.hasOwn(result[0], 'artists'), false);
+    assert.equal(result[0].youtubeUrl, 'https://www.youtube.com/results?search_query=Electric%20Weekend');
+    assert.deepEqual(input, before);
+  }
+});
+
+test('browser non-Festival lineups retain every artist regardless of the legacy messaging threshold', () => {
+  for (const category of ['Nighttime', 'Daytime', 'Afters', '', 'Festival Afters', 'Festival / Nighttime']) {
+    const input = rows(6, { category });
+    assert.deepEqual(groupFestivalResults(input), input, category);
+    const [result] = mergeShowSlots(groupFestivalResults(input));
+    assert.equal(result.type, 'show-group', category);
+    assert.equal(result.artist, input.map(show => show.artist).join(', '), category);
+    assert.equal(result.event, 'Electric Weekend', category);
+    assert.equal(result.youtubeLinks.length, 6, category);
+  }
+  assert.equal(groupEventResults(rows(6, { category: 'Nighttime' }))[0].type, 'event', 'Inactive messaging keeps its original threshold');
+});
+
+test('the Festival marker is exact, case and whitespace normalized, including aggregated category labels', () => {
+  for (const overrides of [
+    { category: '  fEsTiVaL \n' },
+    { category: '', categories: ['Nighttime', ' FESTIVAL '] },
+  ]) {
+    const [result] = groupFestivalResults([row(0, overrides)]);
+    assert.equal(result.type, 'event');
+    assert.equal(result.artist, 'Electric Weekend');
+    assert.ok(result.categories.some(value => value.toLowerCase() === 'festival'));
+  }
+  for (const category of ['Festivals', 'Festival Afters', 'Music Festival', 'Festival / Daytime']) {
+    const input = [row(0, { category })];
+    assert.equal(groupFestivalResults(input)[0], input[0], category);
+  }
+});
+
+test('an explicit Festival marker extends only to the same named event, site and occurrence', () => {
+  const input = [
+    row(0, { category: 'Festival', event: '  Electric   Weekend ' }),
+    row(1, { category: '', event: 'ELECTRIC WEEKEND', date: '2026-10-10' }),
+    row(2, { category: 'Nighttime', date: '2026-10-11' }),
+    row('next-week', { category: '', date: '2026-10-16' }),
+    row('other-site', { category: '', address: '200 Other Road, Dallas, TX', locationQuery: '200 Other Road, Dallas, TX' }),
+    row('other-name', { category: '', event: 'Another Weekend' }),
+  ];
+  const result = groupFestivalResults(input);
+  const festival = result.find(show => show.type === 'event');
+  assert.equal(festival.artist, 'Electric Weekend');
+  assert.equal(festival.entryCount, 3);
+  assert.equal(festival.dateEnd, '2026-10-11');
+  assert.deepEqual(festival.categories, ['Festival', 'Nighttime']);
+  assert.equal(result.length, 4);
+  assert.ok(result.includes(input[3]));
+  assert.ok(result.includes(input[4]));
+  assert.ok(result.includes(input[5]));
+});
+
+test('Festival metadata keeps safe distinct tickets, styles and complete categories across the matching rows', () => {
+  const input = [
+    row(0, { category: 'Festival', style: 'House; Techno', ticketUrl: 'https://tickets.example/pass?utm_source=ig', ticketLinks: [{ url: 'https://tickets.example/vip', label: 'VIP' }, { url: 'javascript:bad', label: 'Bad' }], distanceMiles: 30 }),
+    row(1, { category: '', categories: ['Daytime', ' festival '], style: ' house, Trance ', ticketUrl: 'https://tickets.example/pass?utm_source=email', distanceMiles: 2 }),
+    row(2, { category: 'Nighttime', style: '', ticketUrl: 'https://tickets.example/saturday', date: '2026-10-10' }),
+    row(3, { category: '', ticketUrl: 'https://user:secret@tickets.example/unsafe', date: '2026-10-10' }),
+  ];
+  const [result] = groupFestivalResults(input);
+  assert.equal(result.style, 'House, Techno, Trance');
+  assert.deepEqual(result.categories, ['Festival', 'Daytime', 'Nighttime']);
+  assert.equal(result.category, '');
+  assert.equal(result.distanceMiles, 2);
+  assert.deepEqual(result.ticketLinks.map(link => link.url), [
+    'https://tickets.example/vip', 'https://tickets.example/pass?utm_source=ig', 'https://tickets.example/saturday',
+  ]);
+  assert.match(result.ticketLinks[2].label, /Oct 10, 2026/);
+});
+
+test('artist-filtered Festival results keep the event headline even with only one matching performer', () => {
+  const selected = rows(20, { category: 'Festival' }).filter(show => show.artist === 'DJ 7');
+  const [result] = mergeShowSlots(groupFestivalResults(selected));
+  assert.equal(result.artist, 'Electric Weekend');
+  assert.equal(result.entryCount, 1);
+  assert.equal(result.type, 'event');
+  assert.equal(result.ticketLinks.length, 1);
+});
+
+test('named Festival cards never absorb a concert or another festival at the same physical slot', () => {
+  const input = [
+    row(0, { category: 'Festival', event: 'Electric Weekend', startTime: '20:00:00' }),
+    row(1, { category: 'Festival', event: 'Other Festival', startTime: '20:00:00' }),
+    row(2, { category: 'Nighttime', event: 'Concert Night', artist: 'Alpha', startTime: '20:00:00' }),
+    row(3, { category: 'Nighttime', event: 'Concert Night', artist: 'Beta', startTime: '20:00:00' }),
+  ];
+  const result = mergeShowSlots(groupFestivalResults(input));
+  assert.equal(result.length, 3);
+  assert.deepEqual(result.map(show => show.artist), ['Electric Weekend', 'Other Festival', 'Alpha, Beta']);
+  assert.deepEqual(result.map(show => show.type), ['event', 'event', 'show-group']);
+  assert.equal(result[2].event, 'Concert Night');
+  assert.equal(result[2].entryCount, 2);
+});
+
+test('missing Festival names preserve artists without borrowing a nearby concert title', () => {
+  for (const event of ['', null, 'TBA', 'Festival', 'To be announced']) {
+    const input = [
+      row(0, { category: 'Festival', artist: 'Alpha', event }),
+      row(1, { category: ' FESTIVAL ', artist: 'Beta', event }),
+      row(2, { category: 'Nighttime', artist: 'Gamma', event: 'Concert Night' }),
+    ];
+    const result = mergeShowSlots(groupFestivalResults(input));
+    assert.equal(result.length, 2, String(event));
+    assert.equal(result[0].type, 'show-group', String(event));
+    assert.equal(result[0].artist, 'Alpha, Beta', String(event));
+    assert.equal(result[0].event, '', String(event));
+    assert.deepEqual(result[0].artists, ['Alpha', 'Beta']);
+    assert.equal(result[0].youtubeLinks.length, 2);
+    assert.equal(result[1], input[2]);
+  }
+});
+
+test('Festival headlines do not require a known site, and an unknown site never merges unrelated rows', () => {
+  const input = rows(2, { category: 'Festival', city: '', address: '', locationQuery: null, venue: 'TBA' });
+  const result = groupFestivalResults(input);
+  assert.equal(result.length, 2);
+  assert.ok(result.every(show => show.type === 'event' && show.artist === 'Electric Weekend'));
+  assert.equal(mergeShowSlots(result).length, 2);
+});
+
+test('non-Festival event announcements add metadata and tickets without becoming another performer', () => {
+  const announcement = row('announcement', {
+    artist: 'Electric Weekend', type: 'event', entryCount: 0, category: 'Nighttime',
+    ticketUrl: 'https://tickets.example/announcement',
+    youtubeUrl: 'https://www.youtube.com/results?search_query=Electric%20Weekend',
+  });
+  const input = [announcement, row(0, { artist: 'Alpha', category: 'Nighttime' }), row(1, { artist: 'Beta', category: 'Nighttime' })];
+  assert.deepEqual(groupFestivalResults(input), input);
+  const [result] = mergeShowSlots(groupFestivalResults(input));
+  assert.equal(result.artist, 'Alpha, Beta');
+  assert.deepEqual(result.artists, ['Alpha', 'Beta']);
+  assert.equal(result.event, 'Electric Weekend');
+  assert.equal(result.entryCount, 2);
+  assert.equal(result.ticketLinks.length, 2);
+  assert.equal(result.ticketLinks[0].url, announcement.ticketUrl);
+  assert.ok(result.youtubeLinks.some(link => link.url === announcement.youtubeUrl));
+});
+
+test('Festival grouping accepts frozen inputs and rejects malformed result containers', () => {
+  const input = rows(3, { category: 'Festival' });
+  const before = structuredClone(input);
+  input.forEach(Object.freeze);
+  Object.freeze(input);
+  assert.equal(groupFestivalResults(input).length, 1);
+  assert.deepEqual(input, before);
+  assert.deepEqual(groupFestivalResults([]), []);
+  assert.throws(() => groupFestivalResults(null), /matches must be an array/);
 });

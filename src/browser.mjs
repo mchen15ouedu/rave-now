@@ -10,7 +10,7 @@ import { CityLocationProvider } from './city-locations.mjs';
 import { GoogleLocationProvider, LocationError } from './locations.mjs';
 import { findNearbyShows, findFutureShows } from './shows.mjs';
 import { browserDateWindow, browserRangeLabels } from './browser-ranges.mjs';
-import { groupEventResults, mergeShowSlots } from './event-groups.mjs';
+import { groupFestivalResults, mergeShowSlots } from './event-groups.mjs';
 import { createArtistCatalog,cleanArtistName } from './artist-catalog.mjs';
 import { createArtistVerifier } from './artist-verification.mjs';
 import { artistKey, parseSearchQuery, matchingArtistNames, artistMatches, looksLikeLocation, SearchInputError } from './artist-search.mjs';
@@ -185,7 +185,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
       found=findFutureShows({shows,now,timeZone,signal});
       found={...found,matches:found.matches.filter(show=>show.date>=window.start && (!window.end || show.date<=window.end)),windowStart:window.start,windowEnd:window.end};
     } else found=await findNearbyShows({shows,origin,geocoder,now:window.start,timeZone,days:window.days,radiusMiles:config.radiusMiles,signal});
-    const displayShows=mergeShowSlots(groupEventResults(found.matches));
+    const displayShows=mergeShowSlots(groupFestivalResults(found.matches));
     const result={view,rangeLabel:window.label,searchKind,artistQuery,artistRegistration:registration,shows:displayShows.map(show=>Object.fromEntries(publicFields.filter(key=>show[key]!==undefined).map(key=>[key,show[key]]))),total:displayShows.length,locationLabel:found.locationLabel||null,windowStart:found.windowStart,windowEnd:found.windowEnd||null,radiusMiles:config.radiusMiles,days:window.days,timeZone,excludedCount:found.excludedCount||0,source:{...sourceMeta,...(config.mode==='demo' && loaded.sample===true?{sample:true,label:'Fictional sample events'}:{}),...(config.mode==='demo' && (loaded.snapshotUpdatedAt || env.BROWSER_SNAPSHOT_UPDATED_AT)?{updatedAt:loaded.snapshotUpdatedAt || env.BROWSER_SNAPSHOT_UPDATED_AT}:{})},locationMethod:env.BROWSER_GEOCODER==='google'?'geocoding':'city-centers'};
     if (input.query!==undefined && searchKind==='location') {
       const parsed=parseSearchQuery(input.query);
