@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createFeedbackHandler } from './feedback.mjs';
 import {createContributionService} from './contributions-service.mjs';
 import {createContributionHandler} from './contributions.mjs';
@@ -42,6 +42,27 @@ async function jsonBody(req) {
   for await (const chunk of req) {size+=chunk.length;if(size>8192) throw new BrowserError(413,'Search request is too large');chunks.push(chunk);}
   try {return JSON.parse(Buffer.concat(chunks).toString('utf8'));} catch {throw new BrowserError(400,'Invalid JSON');}
 }
+function expirationBody(req) {
+  if (!/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type']||''))) {req.resume();throw new BrowserError(415,'Expected JSON');}
+  if (Number(req.headers['content-length'])>1024) {req.resume();throw new BrowserError(413,'Request is too large');}
+  return new Promise((resolve,reject)=>{
+    let size=0;const chunks=[];
+    const cleanup=()=>{clearTimeout(timer);req.off('data',data);req.off('end',end);req.off('error',failed);req.off('aborted',aborted);};
+    const failed=error=>{cleanup();req.resume();reject(error instanceof BrowserError?error:new BrowserError(400,'Incomplete request'));};
+    const aborted=()=>failed(new BrowserError(400,'Incomplete request'));
+    const data=chunk=>{size+=chunk.length;if(size>1024)failed(new BrowserError(413,'Request is too large'));else chunks.push(chunk);};
+    const end=()=>{cleanup();try{resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));}catch{reject(new BrowserError(400,'Invalid JSON'));}};
+    const timer=setTimeout(()=>failed(new BrowserError(408,'Request body timed out')),5000);timer.unref?.();
+    req.on('data',data);req.once('end',end);req.once('error',failed);req.once('aborted',aborted);
+    if(req.aborted)aborted();
+  });
+}
+function expirationTimestamp(value) {
+  if(typeof value!=='string'||!/^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00))$/.test(value))return NaN;
+  const calendar=new Date(value.slice(0,10)+'T00:00:00Z');
+  if(!Number.isFinite(calendar.getTime())||calendar.toISOString().slice(0,10)!==value.slice(0,10))return NaN;
+  return Date.parse(value);
+}
 const publicFields=['id','artist','style','category','categories','event','type','entryCount','venue','address','city','date','dateEnd','dateLabel','startTime','timeZoneOffset','ticketUrl','ticketLinks','youtubeUrl','youtubeLinks','locationSource','locationApproximate','distanceMiles'];
 
 /** Browser searches share show selection rules without registering a messaging
@@ -51,6 +72,34 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
   const config=configForBrowser(env);
   const handleFeedback=createFeedbackHandler({env,store:feedbackStore});
   source??=createShowSource(config);
+  const expirationSecret=env.ARTIST_CATALOG_SECRET;
+  const expirationConfigured=typeof expirationSecret==='string'&&expirationSecret.length>=32&&expirationSecret.length<=512;
+  const expirationNonces=new Map();
+  async function handleExpiration(req,res) {
+    if(req.url!=='/api/internal/show-expiration')return false;
+    if(!expirationConfigured){req.resume();send(res,404,{error:'Not found'});return true;}
+    if(req.method!=='POST'){req.resume();res.setHeader('Allow','POST');send(res,405,{error:'Use POST'});return true;}
+    try {
+      const input=await expirationBody(req);
+      if(!input||typeof input!=='object'||Array.isArray(input)||Object.keys(input).length!==3||!['timestamp','nonce','signature'].every(key=>Object.hasOwn(input,key))||typeof input.nonce!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.nonce)||typeof input.signature!=='string'||!/^[0-9a-f]{64}$/i.test(input.signature))throw new BrowserError(400,'Invalid request');
+      const timestamp=expirationTimestamp(input.timestamp),now=new Date(clock()).getTime();
+      if(!Number.isFinite(timestamp))throw new BrowserError(400,'Invalid request');
+      if(!Number.isFinite(now))throw new BrowserError(503,'Cache invalidation is unavailable');
+      const expected=createHmac('sha256',expirationSecret).update(`${input.timestamp}\n${input.nonce}`).digest();
+      if(!timingSafeEqual(expected,Buffer.from(input.signature,'hex'))||Math.abs(now-timestamp)>300000)throw new BrowserError(403,'Authentication failed');
+      for(const [nonce,expires] of expirationNonces)if(expires<=now)expirationNonces.delete(nonce);
+      const nonce=input.nonce.toLowerCase();
+      if(expirationNonces.has(nonce))throw new BrowserError(403,'Authentication failed');
+      // Retain active replay guards rather than evicting them under load. Future
+      // timestamps remain replay-protected for their entire acceptance window.
+      if(expirationNonces.size>=1000)throw new BrowserError(429,'Cache invalidation is busy');
+      if(typeof source.invalidate!=='function')throw new BrowserError(503,'Cache invalidation is unavailable');
+      expirationNonces.set(nonce,timestamp+300001);
+      await source.invalidate();
+      if(!res.destroyed)send(res,200,{ok:true,invalidated:true});
+    }catch(error){if(!res.destroyed&&!res.headersSent)send(res,error instanceof BrowserError?error.status:503,{error:error instanceof BrowserError?error.message:'Cache invalidation is unavailable'});}
+    return true;
+  }
   catalog??=createArtistCatalog({env});
   verifier??=createArtistVerifier();
   geocoder??=env.BROWSER_GEOCODER==='google'?new GoogleLocationProvider({apiKey:env.GOOGLE_MAPS_API_KEY}):new CityLocationProvider();
@@ -194,6 +243,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
     return result;
   }
   const handle=async(req,res)=>{
+    if(await handleExpiration(req,res))return true;
     if (req.method==='GET' && req.url==='/healthz') {send(res,200,{ok:true,mode:messagingReady?'live':'browser',browserReady:true,messagingReady,ready:messagingReady});return true;}
     if (await handleFeedback(req,res)) return true;
     if (await handleContribution(req,res)) return true;

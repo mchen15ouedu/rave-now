@@ -14,5 +14,6 @@ COPY --chown=node:node package.json pnpm-lock.yaml ./
 USER node
 RUN corepack pnpm@10.11.0 install --prod --frozen-lockfile
 COPY --chown=node:node src ./src
+COPY --chown=node:node data/city-directory.json.gz ./data/city-directory.json.gz
 EXPOSE 7860
 CMD ["node", "src/input-analysis.mjs"]

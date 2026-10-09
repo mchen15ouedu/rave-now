@@ -60,3 +60,13 @@ test('processor reports missing configuration as unhealthy',async t=>{
   app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>new Promise(resolve=>app.server.close(resolve)));
   const response=await fetch(`http://127.0.0.1:${app.server.address().port}/healthz`);assert.equal(response.status,503);assert.equal((await response.json()).ok,false);await app.stop();
 });
+
+test('processor checks enabled cleanup configuration and reports only aggregate cleanup state',async t=>{
+  const cleanup={state:()=>({enabled:true,configured:false,intervalMinutes:15,status:'idle',lastRunUtc:null,deleted:0,skipped:0,cacheInvalidated:false,state:'idle'}),start(){},async stop(){}};
+  const app=createInputAnalysisApp({env,cleanup,ai:{close(){}},contributions:{async drain(){},async stop(){}},feedback:{async drain(){},async stop(){}}});
+  app.server.listen(0,'127.0.0.1');await once(app.server,'listening');t.after(()=>new Promise(resolve=>app.server.close(resolve)));
+  const origin=`http://127.0.0.1:${app.server.address().port}`;
+  let response=await fetch(origin+'/healthz');assert.equal(response.status,503);assert.equal((await response.json()).showExpiration.configured,false);
+  cleanup.state=()=>({enabled:true,configured:true,intervalMinutes:15,status:'completed',lastRunUtc:submittedUtc,deleted:3,skipped:1,cacheInvalidated:true,state:'idle'});
+  response=await fetch(origin+'/healthz');assert.equal(response.status,200);const health=await response.json();assert.equal(health.showExpiration.deleted,3);assert.equal(health.showExpiration.intervalMinutes,15);assert.doesNotMatch(JSON.stringify(health),/secret|token|transcript|fingerprint|snapshotToken/);await app.stop();
+});

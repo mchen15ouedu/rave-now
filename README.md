@@ -142,3 +142,5 @@ Code is licensed under the [MIT License](LICENSE). The GeoNames city/ZIP directo
 ## Separate input analysis
 
 Deploy a dedicated CPU Space using [the processor instructions](deploy/input-analysis/README.md). The browser saves input; the processor verifies artist/show submissions and prepares private feedback summaries in roughly hourly batches. Set `HF_INPUT_ANALYSIS_URL` alongside `HF_SPACE_URL` to let the hourly health workflow check both Spaces with one runner. Timing can be delayed by schedules, cold starts, or pending work.
+
+Expired shows are removed by the dedicated input-analysis worker at startup and every 15 minutes. Regular shows expire 24 hours after their listed start time. A date-only show expires 24 hours after the end of its local day. Festival rows stay until 24 hours after their final local day, using the complete source and any explicit end date. Uncertain dates and ambiguous festival identities stay for review. The worker deletes source rows under a writer lock and clears the hosted feed cache; the live deployment does not include an old tracker snapshot.

@@ -25,14 +25,16 @@ var CATALOG_SHOW_HEADERS = ['Artist', 'Event', 'Location', 'City', 'Address', 'T
 function doPost(e) {
   try {
     var content = e && e.postData && e.postData.contents;
-    if (typeof content !== 'string' || content.length > 16384) return catalogOutput_({ ok: false, code: 'INVALID_REQUEST' });
+    if (typeof content !== 'string' || content.length > 131072) return catalogOutput_({ ok: false, code: 'INVALID_REQUEST' });
     var input = JSON.parse(content);
     var properties = PropertiesService.getScriptProperties();
     var secret = properties.getProperty('ARTIST_CATALOG_SECRET');
     if (!secret || secret.length < 32 || !input || typeof input !== 'object' || Array.isArray(input) || !catalogSecretEquals_(input.secret, secret)) {
       return catalogOutput_({ ok: false, code: 'UNAUTHORIZED' });
     }
-    if (input.action !== 'readCatalog' && input.action !== 'ensureArtist' && input.action !== 'readShows' && input.action !== 'ensureEvent') return catalogOutput_({ ok: false, code: 'INVALID_ACTION' });
+    var cleanup = input.action === 'readExpirationSnapshot' || input.action === 'dryRunExpiredShows' || input.action === 'applyExpiredShows';
+    if (input.action !== 'readCatalog' && input.action !== 'ensureArtist' && input.action !== 'readShows' && input.action !== 'ensureEvent' && !cleanup) return catalogOutput_({ ok: false, code: 'INVALID_ACTION' });
+    if (content.length > 16384 && input.action !== 'dryRunExpiredShows' && input.action !== 'applyExpiredShows') return catalogOutput_({ ok: false, code: 'INVALID_REQUEST' });
     var config = catalogConfiguration_(properties);
     var name = input.action === 'ensureArtist' ? catalogCleanName_(input.name) : null;
     var event = input.action === 'ensureEvent' ? catalogEventInput_(input.event) : null;
@@ -43,11 +45,13 @@ function doPost(e) {
       var readPromoterSheet = catalogSheet_(workbook, config.promoterSheetId, 'Promoter List');
       return catalogOutput_({ ok: true, artists: catalogNames_(readArtistSheet), promoters: catalogNames_(readPromoterSheet) });
     }
-    // Only deduplicating writes require a lock; independent reads must not wait
-    // behind a refresh or an optional artist-suggestion request.
+    // Writes and cleanup snapshots share a lock. Ordinary catalog/feed reads
+    // remain independent of refreshes and optional artist suggestions.
     var lock = LockService.getScriptLock();
     if (!lock.tryLock(10000)) return catalogOutput_({ ok: false, code: 'BUSY' });
     try {
+      if (input.action === 'readExpirationSnapshot') return catalogOutput_(Object.assign({ ok: true }, catalogExpirationState_(workbook, config.showSheetId, secret).snapshot));
+      if (input.action === 'dryRunExpiredShows' || input.action === 'applyExpiredShows') return catalogOutput_(catalogExpireShows_(workbook, config.showSheetId, secret, input, input.action === 'dryRunExpiredShows'));
       if (input.action === 'ensureEvent') return catalogOutput_(catalogEnsureEvent_(workbook, config.showSheetId, event));
       var artistSheet = catalogSheet_(workbook, config.artistSheetId, 'Artist List');
       var promoterSheet = catalogSheet_(workbook, config.promoterSheetId, 'Promoter List');
@@ -140,6 +144,188 @@ function catalogShowRows_(workbook, showSheetId) {
   }
   return rows;
 }
+
+function catalogExpirationError_(code) {
+  var error = new Error('Expiration request rejected'); error.catalogCode = code; throw error;
+}
+
+function catalogExpirationHash_(text) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
+    .map(function (byte) { return ('0' + ((byte + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+
+function catalogExpirationRaw_(value) {
+  if (Object.prototype.toString.call(value) === '[object Date]') {
+    return ['date', isNaN(value.getTime()) ? null : value.toISOString()];
+  }
+  return [typeof value, value];
+}
+
+function catalogExpirationDateOnly_(raw, display, format) {
+  if (Object.prototype.toString.call(raw) !== '[object Date]' || isNaN(raw.getTime())) return null;
+  var pattern = String(format || '').toLowerCase()
+    .replace(/"(?:[^"]|"")*"|\\.|_.|\*./g, '')
+    .replace(/\[(?!h+\]|m+\]|s+\])[^\]]*\]/g, '');
+  var hasClock = /[hs]|am\/pm|a\/p/.test(pattern) || /(?:\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*[ap]m\b)/i.test(String(display || ''));
+  if (hasClock) return false;
+  return /[dy]/.test(pattern) ? true : null;
+}
+
+function catalogExpirationUnambiguousDate_(value) {
+  var text = String(value || '').trim().replace(/\s+/g, ' ');
+  var parts = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!parts) {
+    text = text.replace(/^(?:Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)\s*,?\s+/i, '');
+    var named = text.match(/^([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s+(\d{4})$/i);
+    if (!named) return false;
+    var months = {
+      jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4, may: 5,
+      jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9, september: 9,
+      oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12
+    };
+    var month = months[named[1].toLowerCase()];
+    if (!month) return false;
+    parts = [null, named[3], String(month), named[2]];
+  }
+  var year = Number(parts[1]), monthNumber = Number(parts[2]), day = Number(parts[3]);
+  var leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  var lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return year >= 1 && year <= 9999 && monthNumber >= 1 && monthNumber <= 12 && day >= 1 && day <= lengths[monthNumber - 1];
+}
+
+
+function catalogExpirationDisplay_(raw, display, format, timeZone) {
+  var dateOnly = catalogExpirationDateOnly_(raw, display, format), value = display;
+  if (dateOnly) {
+    if (!timeZone) dateOnly = catalogExpirationUnambiguousDate_(display) ? true : null;
+    else try {
+      value = Utilities.formatDate(new Date(raw.getTime()), timeZone, 'yyyy-MM-dd');
+    } catch (error) {
+      // Fully specified ISO/English display dates establish their calendar day
+      // without guessing a workbook timezone. Numeric/ambiguous display dates
+      // retain their evidence with unknown certainty so they cannot expire.
+      dateOnly = catalogExpirationUnambiguousDate_(display) ? true : null;
+    }
+  }
+  return { value: value, dateOnly: dateOnly };
+}
+
+function catalogExpirationState_(workbook, sheetId, secret) {
+  var sheet = workbook.getSheetById(sheetId);
+  if (!sheet || sheet.getName() !== 'Upcoming Shows') catalogExpirationError_('INVALID_STRUCTURE');
+  var height = sheet.getLastRow(), width = sheet.getLastColumn();
+  if (height < 1 || width < 1) catalogExpirationError_('INVALID_STRUCTURE');
+  if (height - 1 > CATALOG_MAX_SHOW_ROWS || width > CATALOG_MAX_SHOW_COLUMNS) catalogExpirationError_('LIMIT_EXCEEDED');
+  var range = sheet.getRange(1, 1, height, width);
+  var display = range.getDisplayValues(), raw = range.getValues(), formulas = range.getFormulas(), formats = range.getNumberFormats();
+  var headers = display[0].map(function (header) { return String(header).trim().toLowerCase().replace(/[^a-z0-9]/g, ''); });
+  var required = CATALOG_SHOW_HEADERS.concat(['Category']);
+  var indexes = required.map(function (header) {
+    var key = header.toLowerCase().replace(/[^a-z0-9]/g, ''), index = headers.indexOf(key);
+    if (index < 0 || headers.lastIndexOf(key) !== index) catalogExpirationError_('INVALID_STRUCTURE');
+    return index;
+  });
+  var optionalIndex = function (keys) {
+    var found = headers.map(function (key, index) { return keys.indexOf(key) >= 0 ? index : -1; }).filter(function (index) { return index >= 0; });
+    if (found.length > 1) catalogExpirationError_('INVALID_STRUCTURE');
+    return found.length ? found[0] : -1;
+  };
+  var endIndex = optionalIndex(['showend', 'endtime', 'enddate', 'festivalend', 'dateend']);
+  var zoneIndex = optionalIndex(['timezone', 'eventtimezone', 'showtimezone']);
+  var suppliedTimeZone = workbook.getSpreadsheetTimeZone();
+  var timeZone = typeof suppliedTimeZone === 'string' ? suppliedTimeZone.trim() : '';
+  var rawContent = raw.map(function (row) { return row.map(catalogExpirationRaw_); });
+  var digest = catalogExpirationHash_(JSON.stringify([workbook.getId(), sheetId, timeZone, height, width, display, rawContent, formulas, formats]));
+  var token = Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature('rave-now-expiration-v1:' + digest, secret, Utilities.Charset.UTF_8)).replace(/=+$/, '');
+  var records = [];
+  for (var offset = 1; offset < height; offset++) {
+    if (!display[offset].some(function (cell) { return String(cell).trim() !== ''; }) &&
+        !raw[offset].some(function (cell) { return cell !== '' && cell != null; }) &&
+        !formulas[offset].some(function (cell) { return cell !== ''; })) continue;
+    var row = offset + 1, startRaw = raw[offset][indexes[6]], endRaw = endIndex >= 0 ? raw[offset][endIndex] : null;
+    var start = catalogExpirationDisplay_(startRaw, display[offset][indexes[6]], formats[offset][indexes[6]], timeZone);
+    var end = endIndex >= 0 ? catalogExpirationDisplay_(endRaw, display[offset][endIndex], formats[offset][endIndex], timeZone) : { value: '', dateOnly: null };
+    var nativeInstant = function (value) { return Object.prototype.toString.call(value) === '[object Date]' && !isNaN(value.getTime()) ? value.toISOString() : null; };
+    records.push({
+      row: row,
+      fingerprint: catalogExpirationHash_(JSON.stringify([row, display[offset], rawContent[offset], formulas[offset], formats[offset]])),
+      artist: display[offset][indexes[0]], event: display[offset][indexes[1]], venue: display[offset][indexes[2]],
+      city: display[offset][indexes[3]], address: display[offset][indexes[4]], category: display[offset][indexes[8]],
+      start: start.value,
+      startInstant: nativeInstant(startRaw), startDateOnly: start.dateOnly,
+      end: end.value,
+      endInstant: nativeInstant(endRaw), endDateOnly: end.dateOnly,
+      timeZone: zoneIndex >= 0 ? String(display[offset][zoneIndex]).trim() || null : null
+    });
+  }
+  return {
+    sheet: sheet, height: height, width: width,
+    snapshot: { timeZone: timeZone, capturedAt: new Date().toISOString(), snapshotToken: token, rows: records }
+  };
+}
+
+function catalogExpirationPlan_(input) {
+  if (typeof input.snapshotToken !== 'string' || !/^[A-Za-z0-9_-]{1,2048}$/.test(input.snapshotToken) || !Array.isArray(input.candidates)) catalogExpirationError_('INVALID_PLAN');
+  if (input.candidates.length > 500) catalogExpirationError_('LIMIT_EXCEEDED');
+  var seen = Object.create(null);
+  return input.candidates.map(function (candidate) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) ||
+        Object.keys(candidate).some(function (key) { return ['row', 'fingerprint', 'expiresAt'].indexOf(key) < 0; }) ||
+        !Number.isInteger(candidate.row) || candidate.row < 2 || candidate.row > CATALOG_MAX_SHOW_ROWS + 1 || seen[candidate.row] ||
+        typeof candidate.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(candidate.fingerprint) ||
+        typeof candidate.expiresAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(candidate.expiresAt)) catalogExpirationError_('INVALID_PLAN');
+    var epoch = Date.parse(candidate.expiresAt);
+    if (!Number.isFinite(epoch) || new Date(epoch).toISOString().replace('.000Z', 'Z') !== candidate.expiresAt.replace('.000Z', 'Z')) catalogExpirationError_('INVALID_PLAN');
+    seen[candidate.row] = true;
+    return { row: candidate.row, fingerprint: candidate.fingerprint, expiresAt: epoch };
+  });
+}
+
+function catalogExpirationProtectedRows_(sheet) {
+  if (sheet.getProtections(SpreadsheetApp.ProtectionType.SHEET).length) return { all: true, ranges: [] };
+  return { all: false, ranges: sheet.getProtections(SpreadsheetApp.ProtectionType.RANGE).map(function (protection) {
+    var range = protection.getRange();
+    return { first: range.getRow(), last: range.getRow() + range.getNumRows() - 1 };
+  }) };
+}
+
+function catalogExpireShows_(workbook, sheetId, secret, input, dryRun) {
+  var candidates = catalogExpirationPlan_(input);
+  var state = catalogExpirationState_(workbook, sheetId, secret);
+  if (!catalogSecretEquals_(input.snapshotToken, state.snapshot.snapshotToken)) catalogExpirationError_('STALE_SNAPSHOT');
+  var records = Object.create(null), now = Date.now();
+  state.snapshot.rows.forEach(function (record) { records[record.row] = record; });
+  candidates.forEach(function (candidate) {
+    if (!records[candidate.row] || records[candidate.row].fingerprint !== candidate.fingerprint) catalogExpirationError_('STALE_SNAPSHOT');
+    if (candidate.expiresAt > now) catalogExpirationError_('NOT_EXPIRED');
+  });
+  var sheet = state.sheet, maxColumns = sheet.getMaxColumns();
+  var completeRange = sheet.getRange(1, 1, state.height, maxColumns);
+  var merged = completeRange.getMergedRanges().map(function (range) { return { first: range.getRow(), last: range.getRow() + range.getNumRows() - 1 }; });
+  var protectedRows = catalogExpirationProtectedRows_(sheet), allEditable = completeRange.canEdit();
+  var eligible = [], skipped = [];
+  candidates.forEach(function (candidate) {
+    var row = candidate.row;
+    var blocked = protectedRows.all || protectedRows.ranges.concat(merged).some(function (range) { return row >= range.first && row <= range.last; });
+    if (blocked || !allEditable && !sheet.getRange(row, 1, 1, maxColumns).canEdit()) skipped.push(row);
+    else eligible.push(row);
+  });
+  eligible.sort(function (a, b) { return a - b; });
+  skipped.sort(function (a, b) { return a - b; });
+  if (dryRun) return { ok: true, deleted: 0, deletedRows: [], skippedRows: skipped, eligibleRows: eligible };
+  var blocks = [];
+  for (var i = 0; i < eligible.length; i++) {
+    var previous = blocks.length ? blocks[blocks.length - 1] : null;
+    if (previous && previous.first + previous.count === eligible[i]) previous.count++;
+    else blocks.push({ first: eligible[i], count: 1 });
+  }
+  // Delete physical rows from the bottom so earlier row numbers never shift.
+  // No cell/range/header/tab supplied by the caller can change this target.
+  for (var block = blocks.length - 1; block >= 0; block--) sheet.deleteRows(blocks[block].first, blocks[block].count);
+  if (eligible.length) SpreadsheetApp.flush();
+  return { ok: true, deleted: eligible.length, deletedRows: eligible, skippedRows: skipped };
+}
+
 
 function catalogEventError_(code) { var error = new Error('Event write rejected'); error.catalogCode = code; throw error; }
 

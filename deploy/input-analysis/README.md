@@ -12,7 +12,7 @@ pinned: false
 
 A separate CPU Basic Space processes saved user input at startup and roughly once an hour. The browser Space stays responsive while inference runs here. There is no public transcript, report, or processing-trigger endpoint; `/healthz` exposes only readiness and batch timing.
 
-Copy this folder's Dockerfile to the Space root, with `package.json`, `pnpm-lock.yaml`, and `src/`. Do not upload a tracker snapshot, browser build, credentials, or runtime files.
+Copy this folder's Dockerfile to the Space root, with `package.json`, `pnpm-lock.yaml`, `src/`, and `data/city-directory.json.gz`. Do not upload a tracker snapshot, browser build, credentials, or runtime files.
 
 Configure server variables:
 
@@ -33,3 +33,11 @@ The processor reuses one pinned quantized Qwen3 model on CPU, sequentially proce
 Feedback reports contain an AI summary, category, suggested improvement, source feedback UUID, and model revision. They are marked `owner-review` and cannot change the app. Model output can be wrong; inspect the original complaint before deciding. Invalid or unavailable analysis remains unreported for a later attempt. Reports and raw submissions stay in separate private HF datasets and survive Space rebuilds. Owner export: `node scripts/export-input-analysis.mjs` with the private environment configured.
 
 Set the GitHub repository variable `HF_INPUT_ANALYSIS_URL` to the protected Space's public `https://your-space.hf.space` origin. The existing hourly health workflow can wake both Spaces. GitHub schedules and free hardware do not guarantee an exact processing time; every processor startup attempts pending work. CPU Basic has no hourly hardware charge under an eligible paid account; this deployment does not request upgraded hardware or paid inference.
+
+Expired-show cleanup is independent of model inference. Set `SHOW_EXPIRATION_ENABLED=true`, `SHOW_EXPIRATION_INTERVAL_MINUTES=15`, and `SHOW_EXPIRATION_BROWSER_ORIGIN` to the browser Space HTTPS origin after deploying the reviewed bridge and previewing its plan. It reuses the existing server-only tracker credentials. The processor includes only the offline city directory for time zones; it has no tracker snapshot.
+
+Regular shows expire 24 hours after the listed time. If no time is listed, cleanup waits until the end of the event's local calendar day plus 24 hours. Festivals use the final day across the complete source and an optional Show End / End Time / End Date / Festival End / Date End column. A final-day clock does not shorten a festival's full final day. Event time zones and explicit UTC offsets take priority; ambiguous locales use a conservative latest-world-time bound. Invalid dates, ambiguous festival identities, and protected or merged rows stay intact. Cleanup never touches Artist List, Promoter List, user registrations, feedback, or contribution audit records.
+
+Each pass reads a signed complete-sheet snapshot, plans at most 500 expired rows, then applies that exact plan under the existing writer lock. Any changed sheet invalidates the plan. Writes are not automatically retried. The next pass reads a fresh snapshot. After deletion, a signed callback clears the browser's in-memory feed cache; failed notifications retry at the next tick or processor startup. Messaging has its own cache of at most 60 seconds. `/healthz` exposes cleanup timing and aggregate counts without event rows or credentials.
+
+With the server environment configured, preview via `node --env-file-if-exists=.env scripts/cleanup-shows.mjs --dry-run`; use `--apply` to apply a fresh plan. The worker operates on current source data, never a user's filtered search results. Timers run while the processor Space is online; a restart immediately catches up. The 15-minute interval means removal can happen up to one interval after eligibility.
