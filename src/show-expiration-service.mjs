@@ -2,14 +2,27 @@ import {createHmac,randomUUID} from 'node:crypto';
 import {planExpiredShows} from './show-expiration.mjs';
 
 const MAX_BYTES=10*1024*1024;
+// Only fixed local/bridge labels may reach public health diagnostics. Provider
+// messages, URLs, arbitrary codes, rows and credentials never leave this layer.
+const SAFE_ERROR_CODES=new Set(['NOT_CONFIGURED','UNAVAILABLE','INVALID_RESPONSE','CANCELLED','INVALIDATION_FAILED','INVALID_REQUEST','UNAUTHORIZED','INVALID_ACTION','BUSY','POST_REQUIRED','INVALID_STRUCTURE','LIMIT_EXCEEDED','INVALID_PLAN','STALE_SNAPSHOT','NOT_EXPIRED','FETCH_TIMEOUT','NETWORK_DNS','NETWORK_ERROR','HTTP_ERROR','INVALID_REDIRECT']);
+const safeErrorCode=code=>SAFE_ERROR_CODES.has(code)?code:'UNAVAILABLE';
+const failureCode=(error,signal)=>signal?.aborted||error?.name==='AbortError'||error?.name==='TimeoutError'||error?.code==='ABORT_ERR'?'CANCELLED':safeErrorCode(error?.code);
+function bridgeFailureCode(error,signal,deadline) {
+  if(signal?.aborted)return 'CANCELLED';
+  const code=error?.cause?.code??error?.code;
+  if(deadline.aborted||error?.name==='TimeoutError'||error?.cause?.name==='TimeoutError'||code==='UND_ERR_CONNECT_TIMEOUT')return 'FETCH_TIMEOUT';
+  if(code==='ENOTFOUND'||code==='EAI_AGAIN')return 'NETWORK_DNS';
+  if(['ECONNRESET','ECONNREFUSED','ENETUNREACH','EHOSTUNREACH','ETIMEDOUT','EPIPE','UND_ERR_SOCKET','UND_ERR_CONNECT_TLS','UND_ERR_DESTROYED'].includes(code))return 'NETWORK_ERROR';
+  return failureCode(error,signal);
+}
 export class ShowExpirationError extends Error {
-  constructor(code='UNAVAILABLE'){super('Show cleanup could not be confirmed.');this.name='ShowExpirationError';this.code=code;}
+  constructor(code='UNAVAILABLE'){super('Show cleanup could not be confirmed.');this.name='ShowExpirationError';this.code=safeErrorCode(code);}
 }
 const invalid=()=>new ShowExpirationError('INVALID_RESPONSE');
 const instant=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T/.test(value)&&Number.isFinite(Date.parse(value));
 
 async function responseJson(response) {
-  if(!response.ok)throw new ShowExpirationError();
+  if(!response.ok)throw new ShowExpirationError('HTTP_ERROR');
   if(Number(response.headers.get('content-length'))>MAX_BYTES)throw invalid();
   const reader=response.body?.getReader();
   if(!reader)throw invalid();
@@ -17,7 +30,7 @@ async function responseJson(response) {
   try {for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>MAX_BYTES)throw invalid();chunks.push(Buffer.from(value));}}
   catch(error){await reader.cancel().catch(()=>{});throw error;}
   let value;try{value=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{throw invalid();}
-  if(!value||Array.isArray(value)||value.ok!==true)throw new ShowExpirationError(typeof value?.code==='string'&&/^[A-Z_]{1,40}$/.test(value.code)?value.code:'INVALID_RESPONSE');
+  if(!value||Array.isArray(value)||value.ok!==true)throw new ShowExpirationError(typeof value?.code==='string'?value.code:'INVALID_RESPONSE');
   return value;
 }
 
@@ -61,12 +74,12 @@ export function createExpirationBridge({env=process.env,fetchImpl=fetch}={}) {
     try{
       let response=await fetchImpl(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secret:key,action,...details}),redirect:'manual',signal:requestSignal});
       if([301,302,303].includes(response.status)){
-        let redirect;try{redirect=new URL(response.headers.get('location'));}catch{throw invalid();}
-        if(redirect.protocol!=='https:'||redirect.hostname!=='script.googleusercontent.com'||redirect.port||redirect.username||redirect.password)throw invalid();
+        let redirect;try{redirect=new URL(response.headers.get('location'));}catch{throw new ShowExpirationError('INVALID_REDIRECT');}
+        if(redirect.protocol!=='https:'||redirect.hostname!=='script.googleusercontent.com'||redirect.port||redirect.username||redirect.password)throw new ShowExpirationError('INVALID_REDIRECT');
         response=await fetchImpl(redirect.href,{method:'GET',redirect:'error',signal:requestSignal});
       }
       return await responseJson(response);
-    }catch(error){if(error instanceof ShowExpirationError)throw error;throw new ShowExpirationError(signal?.aborted?'CANCELLED':'UNAVAILABLE');}
+    }catch(error){if(signal?.aborted)throw new ShowExpirationError('CANCELLED');if(deadline.aborted)throw new ShowExpirationError('FETCH_TIMEOUT');if(error instanceof ShowExpirationError)throw error;throw new ShowExpirationError(bridgeFailureCode(error,signal,deadline));}
   }
   const write=async(action,plan,options)=>receiptValue(await request(action,{snapshotToken:plan.snapshotToken,candidates:plan.candidates},options),plan.candidates,{dryRun:action==='dryRunExpiredShows'});
   return {
@@ -84,10 +97,11 @@ export async function invalidateHostedShows({env=process.env,fetchImpl=fetch,clo
   if(typeof key!=='string'||key.length<32||key.length>512||origin.protocol!=='https:'||origin.port||origin.username||origin.password||origin.pathname!=='/'||origin.search||origin.hash)throw new ShowExpirationError('NOT_CONFIGURED');
   const timestamp=new Date(clock()).toISOString(),nonce=randomUUID();
   const signature=createHmac('sha256',key).update(`${timestamp}\n${nonce}`).digest('hex');
+  const deadline=AbortSignal.timeout(15000),requestSignal=signal?AbortSignal.any([signal,deadline]):deadline;
   try {
-    const response=await fetchImpl(new URL('/api/internal/show-expiration',origin),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({timestamp,nonce,signature}),redirect:'error',signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});
+    const response=await fetchImpl(new URL('/api/internal/show-expiration',origin),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({timestamp,nonce,signature}),redirect:'error',signal:requestSignal});
     const value=await responseJson(response);if(value.invalidated!==true)throw invalid();
-  }catch(error){if(error instanceof ShowExpirationError)throw error;throw new ShowExpirationError('INVALIDATION_FAILED');}
+  }catch(error){if(failureCode(error,requestSignal)==='CANCELLED')throw new ShowExpirationError('CANCELLED');if(error instanceof ShowExpirationError)throw error;throw new ShowExpirationError('INVALIDATION_FAILED');}
   return true;
 }
 
@@ -98,32 +112,34 @@ export function createShowExpirationService({env=process.env,bridge,fetchImpl=fe
   bridge??=createExpirationBridge({env,fetchImpl});
   invalidate??=options=>invalidateHostedShows({env,fetchImpl,clock,...options});
   let running,timer,controller,stopped=false,pendingInvalidation=true;
-  let last={status:enabled?'idle':'disabled',lastRunUtc:null,sourceRows:0,expired:0,retained:0,invalid:0,blockedFestivalRows:0,deleted:0,skipped:0,cacheInvalidated:false};
+  let last={status:enabled?'idle':'disabled',lastRunUtc:null,sourceRows:0,expired:0,retained:0,invalid:0,blockedFestivalRows:0,deleted:0,skipped:0,cacheInvalidated:false,errorCode:null,errorStage:null};
   async function drain({dryRun=false}={}) {
-    if(!enabled||stopped)return {status:enabled?'stopped':'disabled',deleted:0};
+    if(!enabled||stopped)return {status:enabled?'stopped':'disabled',deleted:0,errorCode:null,errorStage:null};
     if(running)return running;
     controller=new AbortController();
     const deadline=setTimeout(()=>controller.abort(),120000);
     running=(async()=>{
-      const runAt=new Date(clock());let deleted=0,skipped=0,cacheInvalidated=false,status='completed';
+      const runAt=new Date(clock());let deleted=0,skipped=0,cacheInvalidated=false,status='completed',stage='read',errorCode=null,errorStage=null;
       let counts={sourceRows:0,expired:0,retained:0,invalid:0,blockedFestivalRows:0};
       try {
         if(!configured)throw new ShowExpirationError('NOT_CONFIGURED');
         const snapshot=await bridge.readSnapshot({signal:controller.signal});
+        stage='plan';
         const plan=planExpiredShows(snapshot,{now:runAt,limit:500});
         counts={sourceRows:plan.totalRows,expired:plan.expiredCount,retained:plan.keptCount,invalid:plan.invalidCount,blockedFestivalRows:plan.blockedFestivalCount};
         if(plan.candidates.length){
           if(!dryRun)pendingInvalidation=true;
+          stage='apply';
           const receipt=await (dryRun?bridge.dryRun:bridge.apply)({snapshotToken:snapshot.snapshotToken,candidates:plan.candidates},{signal:controller.signal});
           deleted=receipt.deleted;skipped=receipt.skippedRows.length;
         }
         if(dryRun)status='dry-run';
-      }catch{status=controller.signal.aborted?'interrupted':'failed';}
+      }catch(error){errorCode=failureCode(error,controller.signal);errorStage=stage;status=errorCode==='CANCELLED'?'interrupted':'failed';}
       finally{
         if(!dryRun&&pendingInvalidation&&!controller.signal.aborted&&configured){
-          try{cacheInvalidated=await invalidate({signal:controller.signal});pendingInvalidation=!cacheInvalidated;}catch{status='failed';}
+          try{cacheInvalidated=await invalidate({signal:controller.signal});pendingInvalidation=!cacheInvalidated;}catch(error){if(!errorCode){errorCode=failureCode(error,controller.signal);errorStage='invalidate';}status=errorCode==='CANCELLED'?'interrupted':'failed';}
         }
-        last={status,lastRunUtc:runAt.toISOString(),...counts,deleted,skipped,cacheInvalidated};
+        last={status,lastRunUtc:runAt.toISOString(),...counts,deleted,skipped,cacheInvalidated,errorCode,errorStage};
       }
       return {...last};
     })();
