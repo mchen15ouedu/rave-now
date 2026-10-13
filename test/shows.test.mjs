@@ -87,7 +87,7 @@ test('displayed ISO clocks coexist with 24-hour timestamps and sort by their lis
 test('tracker parsing preserves original dates, maps actual columns, and diagnoses invalid rows', () => {
   const shows = parseShows([
     headers,
-    row('Artist A', 'Fri, Oct 9, 2026', '1340 Manufacturing St Dallas TX 75207', 'Club'),
+    row('Artist A', 'Fri, Oct 9, 2026', '100 Example Street Dallas TX 75201', 'Club'),
     row('Artist B', 'TBA'),
     row('Artist C', '2026-02-29'),
     row('Artist D', '2026-10-06', '', 'Secret location TBA'),
@@ -98,7 +98,7 @@ test('tracker parsing preserves original dates, maps actual columns, and diagnos
   assert.equal(shows.length, 4);
   assert.equal(shows[0].date, '2026-10-09');
   assert.equal(shows[0].dateLabel, 'Fri, Oct 9, 2026');
-  assert.equal(shows[0].locationQuery, '1340 Manufacturing St Dallas TX 75207');
+  assert.equal(shows[0].locationQuery, '100 Example Street Dallas TX 75201');
   assert.equal(shows[0].locationApproximate, false);
   assert.equal(shows[1].locationQuery, null);
   assert.equal(shows[2].locationQuery, 'Dallas TX');
@@ -181,12 +181,12 @@ test('City and other columns can be reordered, and an available Address takes pr
   const reordered = [' City ', 'Show Time', 'Ticket Link', 'Location', 'Artist', 'YouTube (Most Popular Song)', 'Address'];
   const [show] = parseShows([
     reordered,
-    [' Austin, TX ', 'Fri, Oct 9, 2026', 'https://example.com/ticket', 'TBA', 'Address priority', '', ' 1340 Manufacturing St, Dallas, TX 75207 '],
+    [' Austin, TX ', 'Fri, Oct 9, 2026', 'https://example.com/ticket', 'TBA', 'Address priority', '', ' 100 Example Street, Dallas, TX 75201 '],
   ]);
   assert.equal(show.artist, 'Address priority');
   assert.equal(show.venue, 'TBA');
   assert.equal(show.city, 'Austin, TX');
-  assert.equal(show.locationQuery, '1340 Manufacturing St, Dallas, TX 75207');
+  assert.equal(show.locationQuery, '100 Example Street, Dallas, TX 75201');
   assert.equal(show.locationSource, 'address');
   assert.equal(show.locationApproximate, false);
 });
