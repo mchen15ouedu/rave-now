@@ -185,11 +185,6 @@ function updateRangeButtons() {
 function updateFreshness(source) {
   const node = $('feed-freshness');
   node.hidden = true;
-  if (source?.sample === true) {
-    node.textContent = 'Fictional sample events · ticket links are placeholders';
-    node.hidden = false;
-    return;
-  }
   if (source?.snapshot === false) {
     node.textContent = 'Live event feed';
     node.hidden = false;
@@ -240,7 +235,7 @@ async function loadShows(input) {
     }
     if (!Array.isArray(data.shows)) throw new Error('The show feed returned an incomplete response. Please try again.');
     if (data.searchKind !== 'artist') state.origin = data.locationInput ? { location: data.locationInput } : input.query ? { location: input.query.replace(/^location:\s*/i, '') } : { ...input };
-    state.lastSearch = data.searchKind === 'artist' ? { ...state.origin, query: input.query } : { ...state.origin };
+    state.lastSearch = data.searchKind === 'artist' ? { query: input.query } : { ...state.origin };
     $('show-grid').replaceChildren(...data.shows.map(showCard));
     const label = String(data.locationLabel || state.origin?.location || 'your current location');
     const days = Number.isInteger(data.days) && data.days > 0 ? data.days : 7;
@@ -248,8 +243,7 @@ async function loadShows(input) {
     updateFreshness(data.source);
     if (data.searchKind === 'artist') {
       const name = String(data.artistQuery || input.query || 'this artist');
-      const hasOrigin = typeof input.location === 'string' || Number.isFinite(input.latitude) && Number.isFinite(input.longitude);
-      const scope = data.view === 'full' || !hasOrigin ? `${rangeLabel} · All locations` : `Near ${label} · ${rangeLabel}`;
+      const scope = `${rangeLabel} · All locations`;
       const saved = data.artistRegistration?.added ? ` Added “${data.artistRegistration.name}” to Artist List.`
         : data.artistRegistration?.status === 'queued' ? ` “${data.artistRegistration.name || name}” was saved for the next analysis batch. Verified artists will be added after processing.`
         : data.artistRegistration?.status === 'unverified' ? ` Could not verify “${data.artistRegistration.name || name}” as a music artist; not added.`
@@ -310,7 +304,7 @@ $('location-form').addEventListener('submit', (event) => {
   const query = $('city').value.trim();
   if (!query) { $('city').focus(); return; }
   ++state.geoRequest;
-  loadShows({ ...state.origin, query });
+  loadShows({ query });
 });
 
 for (const range of selectableRanges) $('range-' + range).addEventListener('click', () => {

@@ -187,10 +187,8 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
     const hasCoordinates=input.latitude!==undefined||input.longitude!==undefined;
     if (input.query!==undefined) {
       const {query,kind}=parseSearchQuery(input.query);
-      // Validate a carried location before any catalog write, even if the query
-      // later replaces that location with another town.
-      if (hasCoordinates || input.location!==undefined) origin=await resolveOrigin(input,{signal});
       if (kind==='location') {
+        if (hasCoordinates || input.location!==undefined) await resolveOrigin(input,{signal});
         origin=await resolveOrigin({location:query},{signal});
       } else {
         loaded=await source.load({signal});
@@ -211,6 +209,9 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
             if (matchingArtistNames(query,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
             artist=true;
           }
+          // Carried locations are relevant only to location searches. Artist
+          // results use the selected date window across every location.
+          if (!artist && (hasCoordinates || input.location!==undefined)) await resolveOrigin(input,{signal});
         }
         if (artist) {
           searchKind='artist';artistQuery=exact||query;
@@ -230,7 +231,7 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
     const now=clock();
     const window=browserDateWindow(view,now,timeZone,config.days);
     let found;
-    if(view==='full' || artistQuery && !origin) {
+    if(view==='full' || artistQuery) {
       found=findFutureShows({shows,now,timeZone,signal});
       found={...found,matches:found.matches.filter(show=>show.date>=window.start && (!window.end || show.date<=window.end)),windowStart:window.start,windowEnd:window.end};
     } else found=await findNearbyShows({shows,origin,geocoder,now:window.start,timeZone,days:window.days,radiusMiles:config.radiusMiles,signal});

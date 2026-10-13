@@ -287,15 +287,16 @@ test('range switches repeat only the accepted location and ignore edited but uns
  selectRange(nodes,'month');await tick();assert.equal(calls.at(-1).payload.location,'Dallas TX');assert.equal(calls.at(-1).payload.view,'month');
 });
 
-test('date filters retain artist query and GPS origin together',async()=>{
+test('artist date filters keep the artist query and drop the previous GPS origin',async()=>{
  const {nodes,calls,geo}=await page({fetchResult:call=>response({shows:[],searchKind:call.payload.query?'artist':'location',artistQuery:call.payload.query,locationLabel:'your current location',view:call.payload.view,rangeLabel:call.payload.view==='weekend'?'This weekend':'Next 7 days'})});
  geo.requests[0].success({coords:{latitude:40.71,longitude:-74.01}});await tick();
  submit(nodes,'Tiësto');await tick();
  nodes.get('city').value='Unsent artist';selectRange(nodes,'weekend');await tick();
  const call=calls.at(-1);
  assert.equal(call.payload.view,'weekend');assert.equal(call.payload.query,'Tiësto');
- assert.equal(call.payload.latitude,40.71);assert.equal(call.payload.longitude,-74.01);
- assert.match(nodes.get('location-status').textContent,/No shows found for Tiësto.*Near your current location.*This weekend/);
+ assert.equal(call.payload.latitude,undefined);assert.equal(call.payload.longitude,undefined);assert.equal(call.payload.location,undefined);
+ assert.match(nodes.get('location-status').textContent,/No shows found for Tiësto.*This weekend.*All locations/);
+ assert.doesNotMatch(nodes.get('location-status').textContent,/Near your current location/);
 });
 
 test('all-location artist searches obey the selected date range and show zero without a fallback request',async()=>{
@@ -306,13 +307,6 @@ test('all-location artist searches obey the selected date range and show zero wi
  assert.equal(nodes.get('feed-freshness').hidden,false);assert.equal(nodes.get('feed-freshness').textContent,'Event feed updated Oct 5, 2026');
  selectRange(nodes,'three-months');await tick();assert.equal(calls.length,2);assert.equal(calls.at(-1).payload.query,'Tiësto');assert.equal(calls.at(-1).payload.location,undefined);
  assert.match(nodes.get('location-status').textContent,/Next 3 months.*All locations/);
-});
-
-test('sample results are labeled as fictional and ticket links as placeholders',async()=>{
- const {nodes}=await page({geolocation:false,fetchResult:()=>response({shows:[],searchKind:'location',locationLabel:'New York',source:{snapshot:true,sample:true,updatedAt:'2026-10-05'}})});
- submit(nodes,'New York, NY');await tick();
- assert.equal(nodes.get('feed-freshness').hidden,false);
- assert.equal(nodes.get('feed-freshness').textContent,'Fictional sample events · ticket links are placeholders');
 });
 
 test('live feed freshness identifies the live source without presenting a timestamp as the last edit time',async()=>{
@@ -326,7 +320,7 @@ test('live feed freshness identifies the live source without presenting a timest
 test('failed new input does not replace the accepted artist search used by date filters',async()=>{
  const {nodes,calls}=await page({geolocation:false,fetchResult:call=>call.payload.query==='Bad city'?{ok:false,json:async()=>({error:'Location not found'})}:response({shows:[],searchKind:call.payload.query==='Dallas TX'?'location':'artist',locationInput:call.payload.query==='Dallas TX'?'Dallas TX':undefined,artistQuery:call.payload.query,locationLabel:'Dallas',view:call.payload.view})});
  submit(nodes,'Dallas TX');await tick();submit(nodes,'Tiësto');await tick();submit(nodes,'Bad city');await tick();
- selectRange(nodes,'weekend');await tick();assert.equal(calls.at(-1).payload.location,'Dallas TX');assert.equal(calls.at(-1).payload.query,'Tiësto');assert.equal(calls.at(-1).payload.view,'weekend');
+ selectRange(nodes,'weekend');await tick();assert.equal(calls.at(-1).payload.location,undefined);assert.equal(calls.at(-1).payload.query,'Tiësto');assert.equal(calls.at(-1).payload.view,'weekend');
 });
 
 test('a later range response wins when an earlier range request finishes afterward',async()=>{
@@ -370,18 +364,19 @@ test('range switches follow the latest submitted location while its search is pe
  pending[2](response({shows:[],searchKind:'location',locationInput:'Los Angeles CA',locationLabel:'Los Angeles, CA',view:'month',rangeLabel:'This month'}));await tick();
 });
 
-test('artist queries retain an accepted GPS origin across successive searches',async()=>{
+test('successive artist queries do not send a previously accepted GPS origin',async()=>{
  const {nodes,calls,geo}=await page({fetchResult:call=>response({shows:[],searchKind:call.payload.query?'artist':'location',artistQuery:call.payload.query,locationLabel:'your current location',days:7})});
  geo.requests[0].success({coords:{latitude:32.78,longitude:-96.8}});await tick();
  submit(nodes,'Tiësto');await tick();submit(nodes,'Steve Angello');await tick();
- for(const call of calls.slice(1)){assert.equal(call.payload.latitude,32.78);assert.equal(call.payload.longitude,-96.8);assert.equal(call.payload.location,undefined);}
- assert.match(nodes.get('location-status').textContent,/Steve Angello.*Next 7 days/);
+ for(const call of calls.slice(1)){assert.equal(call.payload.latitude,undefined);assert.equal(call.payload.longitude,undefined);assert.equal(call.payload.location,undefined);}
+ assert.match(nodes.get('location-status').textContent,/Steve Angello.*Next 7 days.*All locations/);
 });
 
-test('artist queries retain a typed location, and failed locations never replace it',async()=>{
+test('artist queries do not send a previously typed location, even after a failed city search',async()=>{
  const {nodes,calls}=await page({geolocation:false,fetchResult:call=>call.payload.query==='bad city'?{ok:false,json:async()=>({error:'Location not found'})}:response({shows:[],searchKind:call.payload.query==='Dallas TX'?'location':'artist',locationInput:call.payload.query==='Dallas TX'?'Dallas TX':undefined,artistQuery:call.payload.query,locationLabel:'Dallas, TX',days:7})});
  submit(nodes,'Dallas TX');await tick();submit(nodes,'bad city');await tick();submit(nodes,'Tiësto');await tick();submit(nodes,'Steve Angello');await tick();
- assert.equal(calls[2].payload.location,'Dallas TX');assert.equal(calls[3].payload.location,'Dallas TX');
+ for(const call of calls.slice(2))assert.equal(call.payload.location,undefined);
+ assert.match(nodes.get('location-status').textContent,/Steve Angello.*Next 7 days.*All locations/);
 });
 
 test('typed artist results explain their scope and registration status',async()=>{

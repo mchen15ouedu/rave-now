@@ -28,12 +28,57 @@ async function setup(t,{artists=['Tiësto','Paris'],shows=records,geocoder,ensur
  return{url,post,writes,verifications,search:app.browserApp.search};
 }
 
-test('one-box known artist filtering keeps nearby seven-day scope and supports accent variants',async t=>{
+test('one-box known artist filtering keeps the seven-day window and supports accent variants',async t=>{
  const {post,writes}=await setup(t);
  const result=await (await post({query:'TIESTO',latitude:32.78,longitude:-96.8})).json();
  assert.equal(result.searchKind,'artist');assert.equal(result.artistQuery,'Tiësto');assert.equal(result.shows.length,1);
  assert.equal(result.shows[0].artist,'Tiësto');assert.equal(result.view,'nearby');assert.equal(result.windowEnd,'2026-10-11');assert.deepEqual(writes,[]);
  assert.equal(result.shows[0].ticketUrl,'https://tickets.example/event');
+ assert.equal(result.locationLabel,null);
+});
+
+test('known artist searches include distant and location-free shows with GPS, without geocoding',async t=>{
+ const geocodes=[];
+ const geocoder={resolveCity:async(query)=>{geocodes.push(query);throw new Error('Must not geocode an artist search');},resolve:async(query)=>{geocodes.push(query);throw new Error('Must not geocode a show destination');}};
+ const shows=parseShows([headers,row('Tiësto','2026-10-11','','Tokyo, Japan'),row('Tiësto','2026-10-09','','Los Angeles, CA'),row('Tiësto','2026-10-08','',''),row('Tiësto','2026-10-12'),row('Tiësto','2026-10-04'),row('Other DJ','2026-10-07')]);
+ const {post,writes,verifications}=await setup(t,{shows,geocoder});
+ const response=await post({query:'TIESTO',latitude:32.78,longitude:-96.8});assert.equal(response.status,200);
+ const result=await response.json();
+ assert.equal(result.searchKind,'artist');assert.equal(result.locationLabel,null);assert.equal(result.excludedCount,0);
+ assert.deepEqual(result.shows.map(show=>[show.date,show.city]),[['2026-10-08',''],['2026-10-09','Los Angeles, CA'],['2026-10-11','Tokyo, Japan']]);
+ assert.ok(result.shows.every(show=>show.artist==='Tiësto'&&show.ticketUrl==='https://tickets.example/event'&&show.youtubeUrl==='https://youtu.be/artist'));
+ assert.ok(result.shows.every(show=>show.distanceMiles===undefined));
+ assert.deepEqual(geocodes,[]);assert.deepEqual(writes,[]);assert.deepEqual(verifications,[]);
+});
+
+test('artist mode ignores unresolved or invalid retained locations and supports GPS plus a retained city',async t=>{
+ const geocodes=[];
+ const geocoder={resolveCity:async(query)=>{geocodes.push(query);throw new LocationError('UNAVAILABLE','Must not use retained city');},resolve:async(query)=>{geocodes.push(query);throw new LocationError('UNAVAILABLE','Must not use retained destination');}};
+ const {post,writes}=await setup(t,{geocoder});
+ for(const input of [
+  {query:'Tiësto',location:'Unknown retained city'},
+  {query:'artist: Tiesto',latitude:91,longitude:0},
+  {query:'Tiësto',latitude:32.78,longitude:-96.8,location:'Dallas, TX'},
+  {query:'artist: Tiesto',location:42},
+  {query:'angello',latitude:'invalid',longitude:0},
+ ]) {
+  const response=await post(input);assert.equal(response.status,200,JSON.stringify(input));
+  const result=await response.json();assert.equal(result.searchKind,'artist');assert.equal(result.total,1);assert.equal(result.locationLabel,null);
+ }
+ assert.deepEqual(geocodes,[]);assert.deepEqual(writes,[]);
+});
+
+test('global artist searches with a retained city preserve every selected date-window boundary',async t=>{
+ const dates=['2026-10-04','2026-10-05','2026-10-08','2026-10-09','2026-10-11','2026-10-12','2026-10-31','2026-11-01','2027-01-04','2027-01-05','2027-01-06'];
+ const shows=parseShows([headers,...dates.toReversed().map(date=>row('Tiësto',date,'',''))]);
+ const geocoder={resolveCity:async()=>{throw new Error('No retained-city lookup');},resolve:async()=>{throw new Error('No destination lookup');}};
+ const {post}=await setup(t,{shows,geocoder});
+ const expected={today:[1],nearby:[1,2,3,4],weekend:[3,4],month:[1,2,3,4,5,6],'three-months':[1,2,3,4,5,6,7,8],full:[1,2,3,4,5,6,7,8,9,10]};
+ for(const [view,indexes] of Object.entries(expected)) {
+  const response=await post({query:'artist: Tiesto',location:'Dallas, TX',view});assert.equal(response.status,200,view);
+  const result=await response.json();assert.equal(result.view,view);assert.equal(result.locationLabel,null);
+  assert.deepEqual(result.shows.map(show=>show.date),indexes.map(index=>dates[index]),view);
+ }
 });
 
 test('artist searches without a location obey the selected date window across locations',async t=>{
@@ -72,10 +117,30 @@ test('a verified new artist is added even if no upcoming shows match',async t=>{
  assert.deepEqual(verifications,['New DJ']);
 });
 
+test('unknown artist classification looks up only the query and preserves verified registration',async t=>{
+ const geocodes=[];
+ const geocoder={resolveCity:async(query)=>{geocodes.push(query);throw new LocationError('NOT_FOUND','No such city.');},resolve:async()=>{throw new Error('Must not geocode destinations');}};
+ const {post,writes,verifications}=await setup(t,{geocoder});
+ const response=await post({query:'New DJ',location:'Unresolvable retained origin',latitude:91,longitude:0});assert.equal(response.status,200);
+ const result=await response.json();assert.equal(result.searchKind,'artist');assert.equal(result.locationLabel,null);assert.equal(result.total,0);
+ assert.deepEqual(result.artistRegistration,{name:'New DJ',added:true});
+ assert.deepEqual(geocodes,['New DJ']);assert.deepEqual(writes,['New DJ']);assert.deepEqual(verifications,['New DJ']);
+});
+
+test('location searches still validate GPS and retained-location conflicts',async t=>{
+ const {post,writes,verifications}=await setup(t);
+ for(const query of ['location: Dallas','Dallas']) {
+  for(const carried of [{latitude:91,longitude:0},{latitude:1},{location:'Dallas',latitude:32.78,longitude:-96.8}]) {
+   const response=await post({query,...carried});assert.equal(response.status,400,JSON.stringify({query,...carried}));
+  }
+ }
+ assert.deepEqual(writes,[]);assert.deepEqual(verifications,[]);
+});
+
 test('promoters, ambiguous cities, ZIP errors, invalid input, cross-origin requests and outages never add artists',async t=>{
  const {post,writes}=await setup(t);
  for(const query of ['SILO Dallas','Springfield','99999','Unknown City, TX','artist:','DJ\nInjected'])assert.equal((await post({query})).status,400,query);
- assert.equal((await post({query:'New DJ',latitude:91,longitude:0})).status,400);
+ assert.equal((await post({query:'location: Dallas',latitude:91,longitude:0})).status,400);
  assert.equal((await post({query:'New DJ'},{Origin:'https://other.example'})).status,403);assert.deepEqual(writes,[]);
  const outage=await setup(t,{geocoder:{resolveCity:async()=>{throw new LocationError('UNAVAILABLE','Provider down.');},resolve:async()=>({lat:0,lng:0})}});
  assert.equal((await outage.post({query:'New DJ'})).status,503);assert.deepEqual(outage.writes,[]);
