@@ -18,7 +18,7 @@ test('calendar date parser accepts source date formats and validates leap days',
     [25569, '1970-01-01'],
     [25569.75, '1970-01-01'],
   ]) assert.equal(parseShowDate(input), expected, String(input));
-  for (const input of ['2026-02-29', 'February 29, 1900', 'Apr 31, 2026', 'Jan 0, 2026', '13/10/2026', 'TBA', '', 'Oct 9, 2026 garbage', NaN, Infinity, -1]) {
+  for (const input of ['2026-02-29', 'February 29, 1900', 'Apr 31, 2026', 'Jan 0, 2026', 'TBA', '', 'Oct 9, 2026 garbage', NaN, Infinity, -1]) {
     assert.equal(parseShowDate(input), null, String(input));
   }
 });
@@ -44,7 +44,7 @@ test('ISO calendar dates with displayed 12-hour clocks preserve dates, times and
   }
 });
 
-test('displayed ISO 12-hour clocks reject invalid times and calendar dates without numeric date guessing', () => {
+test('displayed ISO 12-hour clocks reject invalid times and calendar dates and trailing garbage', () => {
   for (const input of [
     '2026-10-18 0:00 AM', '2026-10-18 13:00 PM', '2026-10-18 24:00 PM',
     '2026-10-18 8:60 PM', '2026-10-18 8:00:60 PM', '2026-10-18 8:00 XM',
@@ -53,7 +53,7 @@ test('displayed ISO 12-hour clocks reject invalid times and calendar dates witho
     assert.equal(parseShowDate(input), null, input);
     assert.deepEqual(parseShowClock(input), {startTime:null, timeZoneOffset:null, timeSpecified:true}, input);
   }
-  for (const input of ['2026-02-29 8:00 PM', '2026-04-31 8:00 PM', '2026-13-18 8:00 PM', '10/18/2026 8:00 PM']) {
+  for (const input of ['2026-02-29 8:00 PM', '2026-04-31 8:00 PM', '2026-13-18 8:00 PM']) {
     assert.equal(parseShowDate(input), null, input);
   }
   const shows = parseShows([headers, row('Invalid show', '2026-10-18 13:00 PM'), row('Invalid date', '2026-02-29 8:00 PM')]);
@@ -87,7 +87,7 @@ test('displayed ISO clocks coexist with 24-hour timestamps and sort by their lis
 test('tracker parsing preserves original dates, maps actual columns, and diagnoses invalid rows', () => {
   const shows = parseShows([
     headers,
-    row('Artist A', 'Fri, Oct 9, 2026', '100 Example Street Dallas TX 75201', 'Club'),
+    row('Artist A', 'Fri, Oct 9, 2026', '1340 Manufacturing St Dallas TX 75207', 'Club'),
     row('Artist B', 'TBA'),
     row('Artist C', '2026-02-29'),
     row('Artist D', '2026-10-06', '', 'Secret location TBA'),
@@ -98,7 +98,7 @@ test('tracker parsing preserves original dates, maps actual columns, and diagnos
   assert.equal(shows.length, 4);
   assert.equal(shows[0].date, '2026-10-09');
   assert.equal(shows[0].dateLabel, 'Fri, Oct 9, 2026');
-  assert.equal(shows[0].locationQuery, '100 Example Street Dallas TX 75201');
+  assert.equal(shows[0].locationQuery, '1340 Manufacturing St Dallas TX 75207');
   assert.equal(shows[0].locationApproximate, false);
   assert.equal(shows[1].locationQuery, null);
   assert.equal(shows[2].locationQuery, 'Dallas TX');
@@ -181,12 +181,12 @@ test('City and other columns can be reordered, and an available Address takes pr
   const reordered = [' City ', 'Show Time', 'Ticket Link', 'Location', 'Artist', 'YouTube (Most Popular Song)', 'Address'];
   const [show] = parseShows([
     reordered,
-    [' Austin, TX ', 'Fri, Oct 9, 2026', 'https://example.com/ticket', 'TBA', 'Address priority', '', ' 100 Example Street, Dallas, TX 75201 '],
+    [' Austin, TX ', 'Fri, Oct 9, 2026', 'https://example.com/ticket', 'TBA', 'Address priority', '', ' 1340 Manufacturing St, Dallas, TX 75207 '],
   ]);
   assert.equal(show.artist, 'Address priority');
   assert.equal(show.venue, 'TBA');
   assert.equal(show.city, 'Austin, TX');
-  assert.equal(show.locationQuery, '100 Example Street, Dallas, TX 75201');
+  assert.equal(show.locationQuery, '1340 Manufacturing St, Dallas, TX 75207');
   assert.equal(show.locationSource, 'address');
   assert.equal(show.locationApproximate, false);
 });

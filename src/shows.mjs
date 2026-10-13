@@ -1,15 +1,7 @@
 import { LocationError } from './locations.mjs';
 import { usableEventName } from './event-groups.mjs';
 
-const MONTHS = new Map([
-  ['jan', 1], ['january', 1], ['feb', 2], ['february', 2], ['mar', 3], ['march', 3],
-  ['apr', 4], ['april', 4], ['may', 5], ['jun', 6], ['june', 6], ['jul', 7], ['july', 7],
-  ['aug', 8], ['august', 8], ['sep', 9], ['sept', 9], ['september', 9], ['oct', 10],
-  ['october', 10], ['nov', 11], ['november', 11], ['dec', 12], ['december', 12],
-]);
-// Sheets can display an ISO calendar date followed by a local 12-hour clock.
-// This is a displayed date/time, not an ISO timestamp to convert through Date.
-const ISO_DISPLAY_CLOCK = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)(?:\s+([A-Z]{2,5}))?$/i;
+import { isoDate, parseShowDateTime } from './show-datetime.mjs';
 
 function clean(value) {
   return value == null ? '' : String(value).trim();
@@ -19,81 +11,14 @@ function normalizedHeader(value) {
   return clean(value).toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function isoDate(year, month, day) {
-  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
-  const lengths = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-  if (!Number.isInteger(year) || year < 1 || year > 9999 || month < 1 || month > 12 ||
-      !Number.isInteger(day) || day < 1 || day > lengths[month - 1]) return null;
-  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+/** Parse listed calendar dates without converting them through the host timezone. */
+export function parseShowDate(value, options) {
+  return parseShowDateTime(value, options).date;
 }
 
-/** Parse calendar dates explicitly: no timezone-dependent parsing of sheet text. */
-export function parseShowDate(value) {
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value) || value < 0 || value > 2958465) return null;
-    const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86400000);
-    return isoDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
-  }
-  if (value instanceof Date) {
-    return Number.isFinite(value.getTime())
-      ? isoDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate()) : null;
-  }
-  let text = clean(value);
-  if (!text) return null;
-  const displayed = text.match(ISO_DISPLAY_CLOCK);
-  if (displayed) return parseShowClock(text).startTime
-    ? isoDate(Number(displayed[1]), Number(displayed[2]), Number(displayed[3])) : null;
-  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/);
-  if (iso) return isoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
-  text = text.replace(/^(?:Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)\s*,?\s+/i, '');
-  const english = text.match(/^([a-z]+)\.?\s+(\d{1,2})(?:st|nd|rd|th)?\s*,?\s+(\d{4})(.*)$/i);
-  if (!english) return null;
-  // Optional displayed show time is retained in dateLabel, but the window uses the local calendar date.
-  const tail = english[4].trim();
-  if (tail && !/^(?:(?:[-–—@]|at)\s*)?\d{1,2}(?::\d{2}(?::\d{2})?)?\s*(?:[AP]M)?(?:\s+[A-Z]{2,5})?$/i.test(tail)) return null;
-  const month = MONTHS.get(english[1].toLowerCase());
-  return month ? isoDate(Number(english[3]), month, Number(english[2])) : null;
-}
-
-/** Keep a listed clock distinct from date-only rows without converting local dates. */
-export function parseShowClock(value) {
-  const absent = { startTime: null, timeZoneOffset: null, timeSpecified: false };
-  const clock = (hours, minutes = 0, seconds = 0, timeZoneOffset = null) => ({
-    startTime: [hours, minutes, seconds].map(part => String(part).padStart(2, '0')).join(':'),
-    timeZoneOffset, timeSpecified: true,
-  });
-  if (typeof value === 'number') {
-    if (!parseShowDate(value) || Number.isInteger(value)) return absent;
-    const seconds = Math.min(86399, Math.round((value - Math.floor(value)) * 86400));
-    return clock(Math.floor(seconds / 3600), Math.floor(seconds % 3600 / 60), seconds % 60);
-  }
-  if (value instanceof Date) {
-    return Number.isFinite(value.getTime()) ? clock(value.getUTCHours(), value.getUTCMinutes(), value.getUTCSeconds(), '+00:00') : absent;
-  }
-  const text = clean(value);
-  const iso = text.match(/^\d{4}-\d{2}-\d{2}(?:[T ](.*))?$/);
-  const english = text.match(/^(?:(?:Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)\s*,?\s+)?[a-z]+\.?\s+\d{1,2}(?:st|nd|rd|th)?\s*,?\s+\d{4}(.*)$/i);
-  const tail = (iso ? iso[1] : english?.[1])?.trim();
-  if (!tail) return absent;
-  const invalid = { ...absent, timeSpecified: true };
-  const displayed = text.match(ISO_DISPLAY_CLOCK);
-  const parts = displayed ? [displayed[0], ...displayed.slice(4)] : iso
-    ? tail.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i)
-    : tail.match(/^(?:(?:[-–—@]|at)\s*)?(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?\s*([AP]M)?(?:\s+([A-Z]{2,5}))?$/i);
-  if (!parts) return invalid;
-  let hours = Number(parts[1]);
-  const minutes = Number(parts[2] || 0), seconds = Number(parts[3] || 0);
-  const meridiem = iso && !displayed ? null : parts[4]?.toUpperCase();
-  if (minutes > 59 || seconds > 59 || hours > (meridiem ? 12 : 23) || (meridiem && hours < 1)) return invalid;
-  if (meridiem) hours = hours % 12 + (meridiem === 'PM' ? 12 : 0);
-  let zone = iso && !displayed ? parts[4]?.toUpperCase() : parts[5]?.toUpperCase();
-  if (zone === 'Z' || zone === 'UTC' || zone === 'GMT') zone = '+00:00';
-  else if (zone && /^[+-]/.test(zone)) {
-    zone = zone.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2');
-    if (Number(zone.slice(1, 3)) > 14 || Number(zone.slice(4)) > 59 || (Number(zone.slice(1, 3)) === 14 && Number(zone.slice(4)) !== 0)) return invalid;
-    if (zone === '-00:00') zone = '+00:00';
-  }
-  return clock(hours, minutes, seconds, zone || null);
+/** Keep listed local clocks and explicit timezone notation separate from the date. */
+export function parseShowClock(value, options) {
+  return parseShowDateTime(value, options).clock;
 }
 
 function usableLocation(value) {

@@ -21,6 +21,63 @@ test('ISO dates with AM/PM clocks keep show and festival expiration boundaries',
   assert.equal(plan([event], '2026-10-20T05:00:00Z').candidates[0].expiresAt, '2026-10-20T05:00:00.000Z');
 });
 
+test('supported unambiguous numeric and named dates retain their complete local 24-hour boundary', () => {
+  for (const start of [
+    '10/18/2026 8:00 PM', '18/10/2026 20:00', '2026/10/18 20:00',
+    '18 Oct 2026 8:00 PM', 'October 18th, 2026 @ 20:00',
+  ]) {
+    const entry = row(2, { start });
+    assert.equal(plan([entry], '2026-10-20T00:59:59.999Z').candidates.length, 0, start);
+    assert.equal(plan([entry], '2026-10-20T01:00:00Z').candidates[0]?.expiresAt,
+      '2026-10-20T01:00:00.000Z', start);
+  }
+});
+
+test('ambiguous numeric text is retained even when the venue timezone is known', () => {
+  for (const start of ['10/08/2026 9:00 PM', '08-10-2026 21:00', '10.08.26', '10/8/2026']) {
+    const result = plan([row(2, { start })], '2027-01-01T00:00:00Z');
+    assert.equal(result.candidates.length, 0, start);
+    assert.equal(result.invalidCount, 1, start);
+  }
+  const sameDayAndMonth = row(2, { start: '08/08/2026 9:00 PM' });
+  assert.equal(plan([sameDayAndMonth], '2026-08-10T02:00:00Z').candidates.length, 1);
+});
+
+test('ambiguous native cells use trusted workbook dates and clocks without guessing text order', () => {
+  const entry = row(2, { start: '08/10/2026 9:00 PM', startInstant: '2026-10-09T02:00:00.000Z', startDateOnly: false });
+  assert.equal(plan([entry], '2026-10-10T01:59:59.999Z').candidates.length, 0);
+  assert.equal(plan([entry], '2026-10-10T02:00:00Z').candidates[0]?.expiresAt,
+    '2026-10-10T02:00:00.000Z');
+  assert.equal(planExpiredShows({ ...snapshot([entry]), timeZone: '' },
+    { now: '2027-01-01T00:00:00Z' }).candidates.length, 0);
+});
+
+test('an ambiguous festival final date blocks deletion of the whole festival', () => {
+  const rows = [festival(2, '2026-10-08T20:00:00', { end: '10/11/2026' }), festival(3, '2026-10-09T20:00:00')];
+  assert.equal(plan(rows, '2027-01-01T00:00:00Z').candidates.length, 0);
+});
+
+test('fractional clocks in supported display formats cannot expire early', () => {
+  for (const start of [
+    '2026-10-18 8:00:00.123 PM', '10/18/2026 8:00:00.123 PM',
+    '18/10/2026 20:00:00.123', '18 Oct 2026 8:00:00.123 PM',
+    '2026-10-18 8:00:00,123 PM', '20261018T20:00:00,123-0500',
+    '２０２６-１０-１８ ８:００:００．１２３ PM', '2026-10-18 8:00:00.\u200b123 PM',
+  ]) {
+    const entry = row(2, { start });
+    assert.equal(plan([entry], '2026-10-20T01:00:00.122Z').candidates.length, 0, start);
+    assert.equal(plan([entry], '2026-10-20T01:00:00.123Z').candidates[0]?.expiresAt,
+      '2026-10-20T01:00:00.123Z', start);
+  }
+  for (const [fraction, boundary] of [['1230', '2026-10-20T01:00:00.123Z'],
+    ['1234', '2026-10-20T01:00:00.124Z'], ['9999', '2026-10-20T01:00:01.000Z']]) {
+    const entry = row(2, { start: `2026-10-18 8:00:00.${fraction} PM` });
+    const lastMillisecond = new Date(Date.parse(boundary) - 1).toISOString();
+    assert.equal(plan([entry], lastMillisecond).candidates.length, 0, fraction);
+    assert.equal(plan([entry], boundary).candidates[0]?.expiresAt, boundary, fraction);
+  }
+});
+
 test('date-only shows survive the whole local day and following 24 hours', () => {
   const entry = row(2, { start: '2026-10-08' });
   assert.equal(plan([entry], '2026-10-10T04:59:59.999Z').candidates.length, 0);
@@ -55,6 +112,15 @@ test('explicit row zones and displayed IANA suffixes outrank city lookup', () =>
   assert.equal(plan([row(2, { timeZone: 'Asia/Tokyo' })], '2026-10-09T12:00:00Z').candidates.length, 1);
   assert.equal(plan([row(2, { start: 'Oct 8, 2026 - 9:00 PM Asia/Tokyo' })], '2026-10-09T12:00:00Z').candidates.length, 1);
   assert.equal(plan([row(2, { timeZone: 'Bad/Unknown' })], '2027-01-01T00:00:00Z').candidates.length, 0);
+});
+
+test('normalized fullwidth IANA suffixes retain explicit venue timing', () => {
+  for (const city of ['Dallas, TX', '']) {
+    const entry = row(2, { city, start: '２０２６-１０-１８ ２０:００ Ａｓｉａ／Ｔｏｋｙｏ' });
+    assert.equal(plan([entry], '2026-10-19T10:59:59.999Z').candidates.length, 0);
+    assert.equal(plan([entry], '2026-10-19T11:00:00Z').candidates[0]?.expiresAt,
+      '2026-10-19T11:00:00.000Z');
+  }
 });
 
 test('reliable address qualifiers resolve a bare city without dominant-city guessing', () => {

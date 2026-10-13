@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { parseShowDate, parseShowClock } from './shows.mjs';
+import { normalizeShowDateTimeText } from './show-datetime.mjs';
 import { usableEventName } from './event-groups.mjs';
 
 const DAY = 86400000;
@@ -103,7 +104,7 @@ function nativeInstant(value) {
 }
 
 function timing(row, prefix, workbookZone) {
-  let text = clean(row[prefix]);
+  let text = normalizeShowDateTimeText(row[prefix]);
   const native = nativeInstant(row[`${prefix}Instant`]);
   const flag = row[`${prefix}DateOnly`];
   if (native !== null && flag !== true && flag !== false) return null;
@@ -111,7 +112,11 @@ function timing(row, prefix, workbookZone) {
   if (namedSuffix) text = text.slice(0, -namedSuffix.length).trim();
   const sourceZone = namedSuffix || clean(row.timeZone);
   if (sourceZone && !validZone(sourceZone)) return null;
-  let date = parseShowDate(text), clock = parseShowClock(text);
+  // Display searches may choose a documented numeric date order. Cleanup must
+  // not delete a text row whose day and month could describe different dates.
+  // Trusted native cells can still fall back to their workbook calendar below.
+  const parseOptions = { rejectAmbiguous: true };
+  let date = parseShowDate(text, parseOptions), clock = parseShowClock(text, parseOptions);
   if (!date && native !== null && validZone(workbookZone)) {
     const parts = localParts(native, workbookZone);
     date = parts.slice(0, 10);
@@ -146,8 +151,13 @@ function timing(row, prefix, workbookZone) {
     instant = Date.parse(`${targetDate}T${targetClock}Z`) + 12 * 3600000;
   }
   if (!dateOnly && !(native !== null && flag === false && !offset && !zone)) {
-    const milliseconds = text.match(/^\d{4}-\d{2}-\d{2}[T ]\d{1,2}:\d{2}:\d{2}\.(\d+)/)?.[1];
-    if (milliseconds) instant += Number(milliseconds.slice(0, 3).padEnd(3, '0'));
+    const fraction = text.match(/\d{1,2}:\d{2}:\d{2}[.,](\d+)/)?.[1];
+    if (fraction) {
+      // Source precision can exceed Date's milliseconds. Round upward so every
+      // supported displayed clock remains intact until its complete 24 hours.
+      const milliseconds = Number(fraction.slice(0, 3).padEnd(3, '0'));
+      instant += milliseconds + (/[1-9]/.test(fraction.slice(3)) ? 1 : 0);
+    }
   }
   if (!Number.isFinite(instant)) return null;
   return { date, instant, dateOnly, zone: zone || null, offset, uncertainLocale: !offset && !zone && !(native !== null && flag === false) };
