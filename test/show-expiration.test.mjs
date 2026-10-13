@@ -12,6 +12,15 @@ test('a listed show is eligible exactly 24 hours after its local start time', ()
   assert.deepEqual(plan([row()], '2026-10-10T02:00:00Z').candidates, [{ row: 2, fingerprint: 'row-2', expiresAt: '2026-10-10T02:00:00.000Z' }]);
 });
 
+test('ISO dates with AM/PM clocks keep show and festival expiration boundaries', () => {
+  const show = row(2, { start: '2026-10-18 8:00 PM' });
+  assert.equal(plan([show], '2026-10-20T00:59:59.999Z').candidates.length, 0);
+  assert.equal(plan([show], '2026-10-20T01:00:00Z').candidates[0].expiresAt, '2026-10-20T01:00:00.000Z');
+  const event = festival(3, '2026-10-18 8:00 PM');
+  assert.equal(plan([event], '2026-10-20T04:59:59.999Z').candidates.length, 0);
+  assert.equal(plan([event], '2026-10-20T05:00:00Z').candidates[0].expiresAt, '2026-10-20T05:00:00.000Z');
+});
+
 test('date-only shows survive the whole local day and following 24 hours', () => {
   const entry = row(2, { start: '2026-10-08' });
   assert.equal(plan([entry], '2026-10-10T04:59:59.999Z').candidates.length, 0);

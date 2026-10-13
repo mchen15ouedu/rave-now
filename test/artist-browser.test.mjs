@@ -81,6 +81,27 @@ test('global artist searches with a retained city preserve every selected date-w
  }
 });
 
+test('artist searches retain ISO dates with 12-hour clocks inside the selected window',async t=>{
+ const shows=parseShows([headers,
+  row('Sample Clock DJ','2026-12-26 10:00 PM'),
+  row('Sample Clock DJ','2026-10-09 8:00 PM'),
+  row('Sample Clock DJ','2026-10-30 10:00 PM'),
+  row('Sample Clock DJ','2026-11-06 10:00 PM'),
+  row('Sample Clock DJ','2027-02-01 10:00 PM'),
+ ]);
+ const {post,writes}=await setup(t,{shows,artists:['Sample Clock DJ']});
+ const response=await post({query:'sample clock dj',view:'three-months',location:'Unknown retained city'});
+ assert.equal(response.status,200);
+ const result=await response.json();
+ assert.equal(result.searchKind,'artist');assert.equal(result.locationLabel,null);
+ assert.deepEqual(result.shows.map(show=>[show.date,show.startTime]),[
+  ['2026-10-09','20:00:00'],['2026-10-30','22:00:00'],['2026-11-06','22:00:00'],['2026-12-26','22:00:00'],
+ ]);
+ assert.ok(result.shows.every(show=>show.ticketUrl&&show.youtubeUrl));assert.deepEqual(writes,[]);
+ const weekly=await (await post({query:'sample clock dj',view:'nearby'})).json();
+ assert.deepEqual(weekly.shows.map(show=>show.date),['2026-10-09']);
+});
+
 test('artist searches without a location obey the selected date window across locations',async t=>{
  const {post}=await setup(t);
  const result=await (await post({query:'Tiësto'})).json();

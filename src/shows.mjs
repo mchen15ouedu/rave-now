@@ -7,6 +7,9 @@ const MONTHS = new Map([
   ['aug', 8], ['august', 8], ['sep', 9], ['sept', 9], ['september', 9], ['oct', 10],
   ['october', 10], ['nov', 11], ['november', 11], ['dec', 12], ['december', 12],
 ]);
+// Sheets can display an ISO calendar date followed by a local 12-hour clock.
+// This is a displayed date/time, not an ISO timestamp to convert through Date.
+const ISO_DISPLAY_CLOCK = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AP]M)(?:\s+([A-Z]{2,5}))?$/i;
 
 function clean(value) {
   return value == null ? '' : String(value).trim();
@@ -37,6 +40,9 @@ export function parseShowDate(value) {
   }
   let text = clean(value);
   if (!text) return null;
+  const displayed = text.match(ISO_DISPLAY_CLOCK);
+  if (displayed) return parseShowClock(text).startTime
+    ? isoDate(Number(displayed[1]), Number(displayed[2]), Number(displayed[3])) : null;
   const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ]\d{1,2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/);
   if (iso) return isoDate(Number(iso[1]), Number(iso[2]), Number(iso[3]));
   text = text.replace(/^(?:Sun(?:day)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?)\s*,?\s+/i, '');
@@ -70,16 +76,17 @@ export function parseShowClock(value) {
   const tail = (iso ? iso[1] : english?.[1])?.trim();
   if (!tail) return absent;
   const invalid = { ...absent, timeSpecified: true };
-  const parts = iso
+  const displayed = text.match(ISO_DISPLAY_CLOCK);
+  const parts = displayed ? [displayed[0], ...displayed.slice(4)] : iso
     ? tail.match(/^(\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i)
     : tail.match(/^(?:(?:[-–—@]|at)\s*)?(\d{1,2})(?::(\d{2})(?::(\d{2}))?)?\s*([AP]M)?(?:\s+([A-Z]{2,5}))?$/i);
   if (!parts) return invalid;
   let hours = Number(parts[1]);
   const minutes = Number(parts[2] || 0), seconds = Number(parts[3] || 0);
-  const meridiem = iso ? null : parts[4]?.toUpperCase();
+  const meridiem = iso && !displayed ? null : parts[4]?.toUpperCase();
   if (minutes > 59 || seconds > 59 || hours > (meridiem ? 12 : 23) || (meridiem && hours < 1)) return invalid;
   if (meridiem) hours = hours % 12 + (meridiem === 'PM' ? 12 : 0);
-  let zone = iso ? parts[4]?.toUpperCase() : parts[5]?.toUpperCase();
+  let zone = iso && !displayed ? parts[4]?.toUpperCase() : parts[5]?.toUpperCase();
   if (zone === 'Z' || zone === 'UTC' || zone === 'GMT') zone = '+00:00';
   else if (zone && /^[+-]/.test(zone)) {
     zone = zone.replace(/^([+-]\d{2})(\d{2})$/, '$1:$2');

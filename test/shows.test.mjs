@@ -23,6 +23,67 @@ test('calendar date parser accepts source date formats and validates leap days',
   }
 });
 
+test('ISO calendar dates with displayed 12-hour clocks preserve dates, times and source labels', () => {
+  for (const [input, date, startTime, timeZoneOffset = null] of [
+    ['2026-10-18 8:00 PM', '2026-10-18', '20:00:00'],
+    ['2026-10-30 10:00 PM', '2026-10-30', '22:00:00'],
+    ['2026-11-06 10:00 PM', '2026-11-06', '22:00:00'],
+    ['2026-12-26 10:00 PM', '2026-12-26', '22:00:00'],
+    ['2026-10-18 12:00 AM', '2026-10-18', '00:00:00'],
+    ['2026-10-18 12:00 PM', '2026-10-18', '12:00:00'],
+    ['2026-10-18 1:02:03 am', '2026-10-18', '01:02:03'],
+    ['2026-10-18 08:00:59 pM CDT', '2026-10-18', '20:00:59', 'CDT'],
+    ['2026-10-18 8:00 PM UTC', '2026-10-18', '20:00:00', '+00:00'],
+  ]) {
+    assert.equal(parseShowDate(input), date, input);
+    assert.deepEqual(parseShowClock(input), {startTime, timeZoneOffset, timeSpecified:true}, input);
+    const [show] = parseShows([headers, row('Sample DJ', input)]);
+    assert.equal(show.date, date);
+    assert.equal(show.startTime, startTime);
+    assert.equal(show.dateLabel, input);
+  }
+});
+
+test('displayed ISO 12-hour clocks reject invalid times and calendar dates without numeric date guessing', () => {
+  for (const input of [
+    '2026-10-18 0:00 AM', '2026-10-18 13:00 PM', '2026-10-18 24:00 PM',
+    '2026-10-18 8:60 PM', '2026-10-18 8:00:60 PM', '2026-10-18 8:00 XM',
+    '2026-10-18 8:00 PM garbage',
+  ]) {
+    assert.equal(parseShowDate(input), null, input);
+    assert.deepEqual(parseShowClock(input), {startTime:null, timeZoneOffset:null, timeSpecified:true}, input);
+  }
+  for (const input of ['2026-02-29 8:00 PM', '2026-04-31 8:00 PM', '2026-13-18 8:00 PM', '10/18/2026 8:00 PM']) {
+    assert.equal(parseShowDate(input), null, input);
+  }
+  const shows = parseShows([headers, row('Invalid show', '2026-10-18 13:00 PM'), row('Invalid date', '2026-02-29 8:00 PM')]);
+  assert.equal(shows.length, 0);
+  assert.deepEqual(shows.warnings, ['Skipped 2 tracker row(s) with missing, TBA, or invalid show dates.']);
+});
+
+test('displayed ISO clocks coexist with 24-hour timestamps and sort by their listed local time', () => {
+  for (const [input, time, offset] of [
+    ['2026-10-18 20:00', '20:00:00', null],
+    ['2026-10-18T20:00:05.123-0500', '20:00:05', '-05:00'],
+    ['2026-10-18 20:00:05+05:30', '20:00:05', '+05:30'],
+    ['2026-10-18T00:00Z', '00:00:00', '+00:00'],
+  ]) {
+    assert.equal(parseShowDate(input), '2026-10-18', input);
+    assert.deepEqual(parseShowClock(input), {startTime:time, timeZoneOffset:offset, timeSpecified:true}, input);
+  }
+  const shows = parseShows([headers,
+    row('Late show', '2026-10-18 10:00 PM'),
+    row('Date only', '2026-10-18'),
+    row('Noon show', '2026-10-18 12:00 PM'),
+    row('Midnight show', '2026-10-18 12:00 AM'),
+    row('Early show', '2026-10-18 8:00 PM'),
+    row('Next day', '2026-10-19 1:00 AM'),
+  ]);
+  assert.deepEqual(findFutureShows({shows, now:'2026-10-13'}).matches.map(show => show.artist),
+    ['Midnight show', 'Noon show', 'Early show', 'Late show', 'Date only', 'Next day']);
+});
+
+
 test('tracker parsing preserves original dates, maps actual columns, and diagnoses invalid rows', () => {
   const shows = parseShows([
     headers,
