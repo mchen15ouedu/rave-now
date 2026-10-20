@@ -53,7 +53,7 @@ test('known artist searches include distant and location-free shows with GPS, wi
 
 test('artist mode ignores unresolved or invalid retained locations and supports GPS plus a retained city',async t=>{
  const geocodes=[];
- const geocoder={resolveCity:async(query)=>{geocodes.push(query);throw new LocationError('UNAVAILABLE','Must not use retained city');},resolve:async(query)=>{geocodes.push(query);throw new LocationError('UNAVAILABLE','Must not use retained destination');}};
+ const geocoder={resolveCity:async(query)=>{geocodes.push(query);if(query==='angello')throw new LocationError('NOT_FOUND','Not a city.');throw new LocationError('UNAVAILABLE','Must not use retained city');},resolve:async(query)=>{geocodes.push(query);throw new LocationError('UNAVAILABLE','Must not use retained destination');}};
  const {post,writes}=await setup(t,{geocoder});
  for(const input of [
   {query:'Tiësto',location:'Unknown retained city'},
@@ -65,7 +65,7 @@ test('artist mode ignores unresolved or invalid retained locations and supports 
   const response=await post(input);assert.equal(response.status,200,JSON.stringify(input));
   const result=await response.json();assert.equal(result.searchKind,'artist');assert.equal(result.total,1);assert.equal(result.locationLabel,null);
  }
- assert.deepEqual(geocodes,[]);assert.deepEqual(writes,[]);
+ assert.deepEqual(geocodes,['angello']);assert.deepEqual(writes,[]);
 });
 
 test('global artist searches with a retained city preserve every selected date-window boundary',async t=>{

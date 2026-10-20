@@ -199,14 +199,17 @@ export function createBrowserHandler({env=process.env,source,geocoder,catalog,ve
         const key=artistKey(query);
         const exact=knownNames.find(name=>artistKey(name)===key);
         const partial=key.length>=3?matchingArtistNames(query,knownNames):[];
-        let artist=kind==='artist' || Boolean(exact) || !looksLikeLocation(query) && partial.length>0;
+        // An artist containing a city's name must not capture a city search.
+        // Explicit artist requests and exact names retain artist precedence;
+        // partial names are considered only after the city lookup finds none.
+        let artist=kind==='artist' || Boolean(exact);
         if (!artist) {
           try {origin=await resolveOrigin({location:query},{signal});}
           catch(error) {
             if (!(error instanceof LocationError) || error.code!=='NOT_FOUND') throw error;
             if (looksLikeLocation(query)) throw error;
-            if (!names.available) throw new BrowserError(503,'Artist names are temporarily unavailable. Use location: City or artist: Name to clarify your search.');
-            if (matchingArtistNames(query,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
+            if (!names.available && partial.length===0) throw new BrowserError(503,'Artist names are temporarily unavailable. Use location: City or artist: Name to clarify your search.');
+            if (partial.length===0 && matchingArtistNames(query,names.promoters).length) throw new BrowserError(400,'That name is in the promoter list. Enter a location or artist name.');
             artist=true;
           }
           // Carried locations are relevant only to location searches. Artist
