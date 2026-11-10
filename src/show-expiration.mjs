@@ -103,6 +103,27 @@ function nativeInstant(value) {
   return Number.isFinite(result) && parseShowDate(value) ? result : null;
 }
 
+function latestListedClock(text) {
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})\s+(.*&.*)$/);
+  if (!match) return text;
+  const clocks = match[2].split('&').map(value => value.trim());
+  let previous = -1, latest;
+  for (const value of clocks) {
+    // Only an explicitly dated, increasing same-day list of 24-hour clocks.
+    // A decreasing list might cross midnight, so it stays for review instead.
+    if (!/^\d{1,2}:\d{2}(?::\d{2})?$/.test(value)) return null;
+    const candidate = `${match[1]}T${value}`;
+    const date = parseShowDate(candidate, { rejectAmbiguous: true });
+    const clock = parseShowClock(candidate);
+    if (!date || !clock.startTime) return null;
+    const [hours, minutes, seconds] = clock.startTime.split(':').map(Number);
+    const at = hours * 3600 + minutes * 60 + seconds;
+    if (at <= previous) return null;
+    previous = at; latest = candidate;
+  }
+  return latest || text;
+}
+
 function timing(row, prefix, workbookZone) {
   let text = normalizeShowDateTimeText(row[prefix]);
   const native = nativeInstant(row[`${prefix}Instant`]);
@@ -110,6 +131,8 @@ function timing(row, prefix, workbookZone) {
   if (native !== null && flag !== true && flag !== false) return null;
   const namedSuffix = text.match(/\s+([A-Za-z_]+\/[A-Za-z0-9_+\-/]+)$/)?.[1];
   if (namedSuffix) text = text.slice(0, -namedSuffix.length).trim();
+  text = latestListedClock(text);
+  if (text === null) return null;
   const sourceZone = namedSuffix || clean(row.timeZone);
   if (sourceZone && !validZone(sourceZone)) return null;
   // Display searches may choose a documented numeric date order. Cleanup must
@@ -176,15 +199,29 @@ function usablePlace(value) {
   return text && !/^(?:[-–—]|n\/?a|none|unknown)$/i.test(text) && !/\b(?:tba|tbd|secret|undisclosed|to be announced)\b/i.test(text) ? normalize(text) : null;
 }
 
-function festivalIdentity(row, requireVenue = true) {
-  const event = usableEventName(row.event);
-  const locality = usablePlace(row.city) || usablePlace(row.address);
-  const venue = usablePlace(row.venue) || usablePlace(row.address);
-  if (!event || !locality || (requireVenue && !venue)) return null;
+function festivalName(value) {
+  // A pending lineup says nothing about the festival's dates. Ignore only a
+  // complete parenthetical lineup-status annotation, not date/site uncertainty.
+  const event = usableEventName(clean(value).replace(/\(\s*line[\s-]*up\s*:?\s*(?:tba|tbd|to\s+be\s+(?:announced|determined))\s*\)/gi, '').trim());
+  if (!event) return null;
   // Tracker announcements and per-artist rows often omit spaces, "Festival",
   // and the year. Only remove those mechanical variants, never fuzzy-match DJs.
   const name = normalize(event).replace(/\b(?:19|20)\d{2}\b/g, '').replace(/(?:19|20)\d{2}$/g, '').replace(/\b(?:music\s+)?festival\b/g, '').replace(/festival/g, '').replace(/\s+/g, '');
-  return name ? { key: `${locality}|${name}`, locality, venue } : null;
+  return name || null;
+}
+
+function festivalIdentity(row) {
+  const name = festivalName(row.event);
+  const locality = usablePlace(row.city) || usablePlace(row.address);
+  const venue = usablePlace(row.venue) || usablePlace(row.address);
+  // One festival can use several stages or omit its venue. Its name and city
+  // establish the family; venue is only additional evidence for incomplete rows.
+  return name && locality ? { key: `${locality}|${name}`, name, locality, venue } : null;
+}
+
+function explicitFestivalYear(value) {
+  const years = new Set([...clean(value).matchAll(/(?<!\d)(?:19|20)\d{2}(?!\d)/g)].map(match => Number(match[0])));
+  return years.size === 1 ? [...years][0] : null;
 }
 
 function badEnd(entry) {
@@ -232,13 +269,32 @@ export function planExpiredShows(snapshot, { now = new Date(), limit = 500 } = {
     }
     for (const occurrence of occurrences) {
       const first = occurrence[0].start.date, last = occurrence.map(entry => entry.end?.date || entry.start.date).sort().at(-1);
-      const sites = new Set(occurrence.map(entry => entry.identity.venue));
+      const members = new Set(occurrence);
+      const conflictingYear = occurrence.some(entry => {
+        const namedYear = explicitFestivalYear(entry.row.event);
+        if (!namedYear || Number(entry.start.date.slice(0, 4)) === namedYear) return false;
+        // A title year alone is not enough: New Year's editions legitimately
+        // begin in December. Retain only when another separate occurrence in
+        // this exact name/city family corroborates the conflicting named year.
+        return family.some(other => !members.has(other) &&
+          explicitFestivalYear(other.row.event) === namedYear &&
+          Number(other.start.date.slice(0, 4)) === namedYear &&
+          Math.abs(dateEpoch(other.start.date) - dateEpoch(entry.start.date)) > 6 * DAY);
+      });
+      if (conflictingYear) { for (const entry of occurrence) entry.blocked = true; continue; }
+      const sites = new Set(occurrence.map(entry => entry.identity.venue).filter(Boolean));
       const possibleStart = dateEpoch(first) - 3 * DAY, possibleEnd = Math.max(dateEpoch(last) + 3 * DAY, dateEpoch(first) + 6 * DAY);
       const incomplete = entries.some(entry => {
         if (!entry.festival || entry.identity) return false;
+        const name = festivalName(entry.row?.event);
+        // An uncertain date for another identifiable festival cannot extend
+        // every festival in the same city or at the same venue indefinitely.
+        if (name && name !== occurrence[0].identity.name) return false;
         const locality = usablePlace(entry.row?.city) || usablePlace(entry.row?.address);
         const venue = usablePlace(entry.row?.venue) || usablePlace(entry.row?.address);
-        if (locality !== occurrence[0].identity.locality && !sites.has(venue)) return false;
+        const sameLocality = locality && locality === occurrence[0].identity.locality;
+        const sameVenue = venue && sites.has(venue);
+        if (!sameLocality && !sameVenue) return false;
         // A missing-name row just after known dates may be the real final day.
         // Do not silently treat the currently known range as complete.
         return !entry.start || (dateEpoch(entry.start.date) >= possibleStart && dateEpoch(entry.start.date) <= possibleEnd);

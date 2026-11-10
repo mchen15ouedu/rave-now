@@ -206,7 +206,8 @@ test('incomplete festival rows retain nearby complete festival data', () => {
     const rows = [festival(2, '2026-10-09'), festival(3, '2026-10-11'), festival(4, start, { event: '' })];
     assert.equal(plan(rows, '2027-01-01T00:00:00Z').candidates.length, 0);
   }
-  assert.equal(plan([festival(2, '2026-10-09', { venue: '', address: '' })], '2027-01-01T00:00:00Z').candidates.length, 0);
+  // A missing venue no longer makes a named festival in a known city uncertain.
+  assert.equal(plan([festival(2, '2026-10-09', { venue: '', address: '' })], '2027-01-01T00:00:00Z').candidates.length, 1);
 });
 
 test('a missing festival name on the possible final day cannot delete earlier lineup rows', () => {
